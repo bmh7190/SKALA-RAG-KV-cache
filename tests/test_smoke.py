@@ -87,7 +87,10 @@ class SmokeTest(unittest.TestCase):
 
     def test_default_function_node_reports_unimplemented(self):
         with self.assertRaises(NotImplementedError):
-            build_graph().invoke(new_state())
+            # InfiniGen 기본 노드는 실제 RAG를 실행하므로 이 배선 테스트에서는 대체한다.
+            build_graph({"research_infinigen": lambda state: {
+                "infinigen_evidence": {"evidence": [], "notes": []}
+            }}).invoke(new_state())
 
 
 if __name__ == "__main__":

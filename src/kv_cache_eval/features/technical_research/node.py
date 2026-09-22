@@ -16,4 +16,7 @@ def research_kivi(state: State) -> StateUpdate:
 
 
 def research_infinigen(state: State) -> StateUpdate:
-    return research_technology(state, "InfiniGen")
+    # 기본 Graph의 가벼운 import를 위해 RAG/LLM 의존성은 이 노드 실행 때 읽는다.
+    from kv_cache_eval.features.technical_research.infinigen.node import research_infinigen as run
+
+    return run(state)

@@ -1,0 +1,199 @@
+{
+  "status": "human-readable reference draft, no retrieval metrics measured",
+  "prepared_date": "2026-09-22",
+  "page_numbering": "1-based physical PDF pages",
+  "notes": [
+    "12 answerable questions for page-grounded retrieval evaluation; 2 negative questions for abstention checks.",
+    "Relevant pages were read directly from the exact downloaded PDFs. Alternative valid pages may exist; do not relabel solely to improve a measured result.",
+    "These are a small development set, not a held-out benchmark. Freeze the fixture before reporting results; disclose tuning on this set.",
+    "Evidence claims require passage-level grounding in addition to page-level retrieval metrics."
+  ],
+  "questions": [
+    {
+      "id": "ig01",
+      "question": "InfiniGen은 KV Cache를 CPU에 보관하면서 CPU-GPU 데이터 전송 병목을 어떻게 줄이는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            1,
+            6
+          ]
+        }
+      ],
+      "answer_hint": "필요한 항목만 예측해 미리 가져오며 CPU에 KV pool을 유지한다."
+    },
+    {
+      "id": "ig02",
+      "question": "InfiniGen은 다음 레이어의 중요한 KV를 예측할 때 어떤 입력과 부분 행렬을 사용하는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            6,
+            8
+          ]
+        }
+      ],
+      "answer_hint": "이전 레이어 attention input과 다음 레이어의 partial query weight 및 partial key cache를 사용한다."
+    },
+    {
+      "id": "ig03",
+      "question": "InfiniGen의 skewing은 언제 수행하며 원래 attention 계산 결과나 런타임 비용에 어떤 영향을 주는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            8
+          ]
+        }
+      ],
+      "answer_hint": "모델 가중치를 한 번 오프라인 변환하고 attention 결과를 유지한다. skewing 자체의 런타임 비용과 별도의 prefetch 비용을 구분한다."
+    },
+    {
+      "id": "ig04",
+      "question": "InfiniGen prefill에서 partial query weight와 key cache에 사용할 열을 어떻게 선택하고 몇 퍼센트를 사용하는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            8
+          ]
+        }
+      ],
+      "answer_hint": "skewed query/key의 절댓값을 합쳐 열별 합에 top-k를 적용하며 본 실험은 30% 열을 사용한다."
+    },
+    {
+      "id": "ig05",
+      "question": "InfiniGen에서 alpha는 어떤 토큰을 GPU로 가져올지 결정하는 데 어떻게 사용되는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            8,
+            9
+          ]
+        }
+      ],
+      "answer_hint": "추정 attention 최고 점수에서 alpha를 뺀 임계값보다 높은 토큰을 선택한다."
+    },
+    {
+      "id": "ig06",
+      "question": "InfiniGen은 CPU의 KV pool이 메모리 한도에 도달하면 어떤 항목을 제거하며 counter 정책을 선택한 이유는 무엇인가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            9
+          ]
+        }
+      ],
+      "answer_hint": "최소 카운터 항목을 교체하며 LRU보다 단순한 구현과 atomic update 회피를 고려했다."
+    },
+    {
+      "id": "ig07",
+      "question": "InfiniGen 원 논문의 실험 GPU, CPU 메모리 용량, CPU-GPU 연결 규격은 무엇인가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            9
+          ]
+        }
+      ],
+      "answer_hint": "RTX A6000 48GB, Xeon Gold 6136, DDR4-2666 96GB, PCIe 3.0 x16."
+    },
+    {
+      "id": "ig08",
+      "question": "InfiniGen에서 partial weight ratio 0.3일 때 speculation용 추가 메모리는 모델과 KV cache에 비해 각각 얼마나 되는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "infinigen-arxiv-v1",
+          "pdf_pages": [
+            13
+          ]
+        }
+      ],
+      "answer_hint": "partial query weight는 전체 모델 파라미터의 2.5%, partial key cache는 전체 KV cache의 15%이며 기준 분모가 다르다."
+    },
+    {
+      "id": "fg01",
+      "question": "FlexGen은 제한된 GPU 메모리에서 대형 모델 추론을 위해 어떤 메모리 계층을 함께 사용하는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "flexgen-icml-2023",
+          "pdf_pages": [
+            1,
+            4
+          ]
+        }
+      ],
+      "answer_hint": "GPU, CPU, 디스크의 메모리 계층을 사용한다."
+    },
+    {
+      "id": "fg02",
+      "question": "FlexGen 논문은 배치 크기 b와 출력 길이 n, 총 지연시간 t를 이용해 생성 처리량을 어떻게 정의하는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "flexgen-icml-2023",
+          "pdf_pages": [
+            4
+          ]
+        }
+      ],
+      "answer_hint": "전체 생성 토큰 수 bn을 총 지연시간 t로 나눈다."
+    },
+    {
+      "id": "h201",
+      "question": "H2O는 어떤 두 종류의 토큰을 KV cache에 유지하며 최근 토큰을 남기는 이유는 무엇인가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "h2o-neurips-2023",
+          "pdf_pages": [
+            5
+          ]
+        }
+      ],
+      "answer_hint": "Heavy hitters와 최근 토큰을 유지하며 최근 단어가 현재 토큰과 강하게 연관된다는 관찰을 사용한다."
+    },
+    {
+      "id": "h202",
+      "question": "H2O는 미래 토큰의 attention을 알 수 없는데 heavy hitter 중요도를 실제 decoding 중 어떻게 계산하는가?",
+      "answerable": true,
+      "relevant_sources": [
+        {
+          "document_id": "h2o-neurips-2023",
+          "pdf_pages": [
+            5
+          ]
+        }
+      ],
+      "answer_hint": "각 decoding 단계에서 이전 토큰의 attention score를 누적한 local 통계를 사용한다."
+    },
+    {
+      "id": "negative01",
+      "question": "2026년에 InfiniGen을 상용 클라우드 서비스에 실제 도입한 기업과 도입 날짜는 무엇인가?",
+      "answerable": false,
+      "relevant_sources": [],
+      "answer_hint": "제공된 세 연구 논문으로는 현재 상용 채택을 확인할 수 없다고 표시해야 한다."
+    },
+    {
+      "id": "negative02",
+      "question": "InfiniGen과 KIVI를 동일한 GPU, 모델, 서비스 부하에서 비교한 월간 운영비 절감률은 얼마인가?",
+      "answerable": false,
+      "relevant_sources": [],
+      "answer_hint": "제공 문서에는 해당 통제 조건의 직접 비용 비교가 없으므로 임의 수치를 생성하지 않는다."
+    }
+  ]
+}

@@ -4,9 +4,9 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 ## 현재 상태
 
-- **구현됨:** 공유 State·자료형·초기값, 구조적 근거 공백 검사, 재조사 횟수 라우팅, 병렬 조사/평가 합류 그래프, 오프라인 smoke test.
-- **TODO:** 원문 수집·RAG·출처 검증, 네 평가 노드, 내용 타당성 검사, 종합, 보고서 및 PDF 생성. 기본 기능 노드는 `NotImplementedError`로 중단됩니다. 테스트 대체 노드의 빈 데이터와 문구는 연구 결과가 아닙니다.
-- 생성 LLM 제공자와 모델은 아직 선정하지 않았습니다. 임베딩 모델은 사용자가 `BAAI/bge-m3`로 지정했으며 검색 품질 검증, 가중치 다운로드, 추론은 아직 하지 않았습니다.
+- **구현됨:** 공유 State·자료형·초기값, 구조적 근거 공백 검사, 재조사 횟수 라우팅, 병렬 조사/평가 합류 그래프, 오프라인 smoke test, InfiniGen 전용 로컬 PDF RAG와 제한된 재검색 흐름.
+- **TODO:** KIVI 조사, 네 평가 노드, 내용 타당성 검사, 종합, 보고서 및 PDF 생성. KIVI와 평가 등 기본 기능 노드는 `NotImplementedError`로 중단됩니다. 테스트 대체 노드의 빈 데이터와 문구는 연구 결과가 아닙니다.
+- InfiniGen 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
 ## 설치와 실행
 
@@ -19,8 +19,8 @@ uv sync --locked
 # 팀 전체 개발 도구를 한 번에 설치: RAG, 웹 검색, 보고서, 선택형 OpenAI 연동
 uv sync --locked --all-extras
 
-# 오프라인 smoke test 및 그래프 컴파일 확인
-uv run --locked python -m unittest discover -s tests -v
+# 오프라인 단위 테스트 및 그래프 컴파일 확인
+HF_HUB_OFFLINE=1 uv run --locked python -m unittest discover -s tests -v
 uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
 ```
 
@@ -29,12 +29,12 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 | 설치 범위 | 패키지와 용도 |
 | --- | --- |
 | 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용. `python-dotenv`: 명시적 `.env` 로딩 함수에 사용 |
-| `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 후속 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
+| `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: InfiniGen PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
 | `web` | `langchain-tavily`: 후속 웹 검색용 |
 | `report` | `reportlab`: 후속 PDF 생성용 |
-| `llm-openai` | OpenAI를 선택할 때 사용할 클라이언트. 제공자나 모델의 기본값을 정하지 않음 |
+| `llm-openai` | InfiniGen 조사에서 `LLM_PROVIDER=openai`로 선택할 때 사용할 클라이언트. 모델의 기본값은 없음 |
 
-전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. smoke test는 키·원문·네트워크가 필요 없습니다.
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 아직 구현되지 않은 KIVI 노드에서 기본 실행이 중단됩니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
 
 ### 환경변수와 필요한 키
 
@@ -45,15 +45,15 @@ cp .env.example .env
 
 | 변수 | 언제 필요한가 |
 | --- | --- |
-| `LLM_PROVIDER`, `LLM_MODEL` | 후속 생성 LLM 구현에서 선택할 값. 현재 미정이며 자동으로 클라이언트를 생성하지 않음 |
-| `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 공개 모델을 로컬로 사용할 계획이며 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
-| `OPENAI_API_KEY` | OpenAI를 생성 LLM으로 선택하고 실제 호출할 때만 필요 |
+| `LLM_PROVIDER`, `LLM_MODEL` | InfiniGen 조사를 실제 실행할 때 사용. 현재 구현된 제공자는 `openai`이며 모델명은 사용자가 설정 |
+| `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 로컬 dense 임베딩이므로 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
+| `OPENAI_API_KEY` | OpenAI 생성 LLM을 실제 호출할 때만 필요 |
 | `TAVILY_API_KEY` | Tavily 웹 검색을 구현하고 호출할 때만 필요 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | 추적은 기본 `false`. 사용하기로 선택한 경우에만 `true`와 키·프로젝트 설정 |
 
-`BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. 현재 RAG 의존성은 `sentence-transformers`/`HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 준비합니다. 모델의 sparse·multi-vector 기능을 자동으로 쓰지는 않습니다. 모델명 지정이 검색 품질 검증을 뜻하지는 않습니다.
+`BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. InfiniGen RAG는 `HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 사용합니다. 모델의 sparse·multi-vector 기능은 사용하지 않습니다.
 
-`.env`는 파일만 만든다고 자동 적용되지 않습니다. 후속 기능의 진입점에서 **클라이언트를 만들기 전에** 다음처럼 명시적으로 호출해야 합니다.
+`.env`는 파일만 만든다고 자동 적용되지 않습니다. InfiniGen CLI와 노드는 클라이언트를 만들기 전에 `load_environment()`를 호출합니다. 별도 진입점을 만들 때도 다음처럼 호출합니다.
 
 ```python
 from kv_cache_eval.common.config import get_embedding_model, load_environment
@@ -62,7 +62,7 @@ load_environment()  # 현재 작업 디렉터리의 .env; 다른 위치라면 �
 embedding_model = get_embedding_model()
 ```
 
-`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `.env`는 Git에서 무시됩니다. 실제 API 호출은 각 기능 노드 구현 후에만 일어납니다.
+`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `.env`는 Git에서 무시됩니다. `index`와 `evaluate`는 생성 LLM API를 호출하지 않으며 `research`와 InfiniGen 노드는 호출합니다.
 
 ## 그래프
 
@@ -71,7 +71,7 @@ embedding_model = get_embedding_model()
 ```mermaid
 flowchart TD
     I[입력 확인] --> K[KIVI 조사 TODO]
-    I --> F[InfiniGen 조사 TODO]
+    I --> F[InfiniGen 조사 RAG]
     K --> J{{두 조사 완료}}
     F --> J
     J --> T[TRL TODO]
@@ -92,6 +92,36 @@ flowchart TD
 ```
 
 `check_evidence`는 결과 누락, 미확인 출처, 근거 ID 연결을 확인하는 **최소 구조 검사**입니다. 문서의 실제 신뢰성, 실험 조건의 비교 가능성, 주장 내용의 타당성 판정은 조사/평가 담당자가 추가해야 합니다. 빈 근거나 빈 평가는 통과하지 않습니다.
+
+## InfiniGen 원문 조사
+
+`sources.json`에 InfiniGen arXiv v1 18쪽을 **주 근거**, FlexGen ICML 2023 23쪽과 H2O NeurIPS 2023 50쪽을 **비교 배경**으로 기록했습니다. 총 91쪽으로 InfiniGen 담당 100쪽 예산 안입니다. PDF는 `data/documents/infinigen/`에 두며 Git에 포함하지 않습니다. 색인 전에 파일 SHA256과 실제 PDF 페이지 수를 검사합니다. PDF는 물리 페이지 안에서 BGE-M3 토큰으로 분할하므로 출처 ID와 페이지가 각 청크에 남습니다.
+
+```bash
+# 먼저 sources.json의 source_url에서 PDF를 받아 각 file 이름으로 배치
+mkdir -p data/documents/infinigen
+curl -L 'https://arxiv.org/pdf/2406.19707v1' -o data/documents/infinigen/01_InfiniGen_arxiv_2406.19707v1.pdf
+curl -L 'https://proceedings.mlr.press/v202/sheng23a/sheng23a.pdf' -o data/documents/infinigen/02_FlexGen_ICML2023.pdf
+curl -L 'https://proceedings.neurips.cc/paper_files/paper/2023/file/6ceefa7b15572587b78ecfcebb2827f8-Paper-Conference.pdf' -o data/documents/infinigen/03_H2O_NeurIPS2023.pdf
+
+# 첫 실행: BGE-M3 가중치 다운로드가 필요할 수 있음
+.venv/bin/python scripts/run_infinigen.py index
+
+# 모델 캐시가 이미 있다면 이후 오프라인으로 재사용하고 평가 가능
+HF_HUB_OFFLINE=1 .venv/bin/python scripts/run_infinigen.py index
+HF_HUB_OFFLINE=1 .venv/bin/python scripts/run_infinigen.py evaluate --top-k 5
+
+# .env의 LLM_PROVIDER, LLM_MODEL, API 키를 사용하는 실제 조사
+env -u OPENAI_API_KEY HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python scripts/run_infinigen.py research --questions 1 --max-attempts 1 --max-llm-calls 2
+```
+
+위 `env -u OPENAI_API_KEY`는 셸에 남은 키 대신 `.env`의 키를 사용하려는 예시입니다. 셸 키를 사용한다면 그 부분을 빼세요. `research`에는 생성 LLM API 연결이 필요합니다. 다운로드한 PDF의 버전이나 바이트가 다르면 해시 검사가 실패하므로 `sources.json`에 기록된 원문 버전을 확인하세요.
+
+`index`는 384토큰 청크와 64토큰 겹침을 기본으로 사용하며, 정규화한 dense 벡터를 FAISS inner product로 검색합니다. 색인 지문은 PDF 해시, 출처 정보, 임베딩 모델, 청킹 설정을 포함합니다. `vectors.faiss`와 `chunks.json`의 해시를 검사해 변경 시 재생성하며 pickle은 읽지 않습니다. 파일은 `data/indexes/infinigen/`에 저장합니다. CPU 환경에서는 PyTorch와 FAISS 스레드를 각각 1개로 제한합니다.
+
+`research`는 질문별로 검색 → 충분성 판단 → 근거 추출을 실행합니다. 부족하거나 발췌가 검증되지 않으면 설정한 횟수 안에서 질의를 수정해 재검색합니다. LLM 호출 상한에 도달하면 남은 질문을 미확인으로 기록합니다. 모델이 제시한 청크 ID, 출처 ID, 물리 PDF 페이지, 발췌가 실제 검색 청크와 일치해야 `source_checked` 근거로 남습니다. 비교 문서의 자체 결과를 InfiniGen 결과로 귀속한 후보도 제외합니다. **이 검사는 출처 연결 검사이며, 주장 전체의 의미가 발췌와 일치하는지 사람 또는 별도 평가가 확인해야 합니다.**
+
+`evaluate`는 고정 개발 질문집 `tests/fixtures/infinigen_questions.json`의 답변 가능 질문 12개에서 출처 ID와 물리 페이지가 일치하는 첫 검색 순위를 측정합니다. 2026-09-22에 이 질문집을 수정하지 않고 측정한 결과는 **HitRate@5 0.75(9/12), MRR@5 0.535**입니다. 근거 없음 질문 2개는 검색 결과만으로 답변 거절을 판정할 수 없어 점수에서 제외했습니다. 결과 상세와 질문집 SHA256은 무시되는 `data/cache/infinigen/retrieval_eval.json`에 저장됩니다. `research` 결과에는 임베딩 모델과 생성 LLM 제공자·모델을 별도 필드로 기록합니다. 이는 작은 개발 집합의 페이지 검색 점수이며, 최종 주장 정확도나 다른 환경에서의 성능을 뜻하지 않습니다. 놓친 질문은 `ig07`, `h201`, `h202`입니다.
 
 ## State와 노드 규약
 
@@ -118,7 +148,7 @@ flowchart TD
 | 담당 기능 | 시작 파일 |
 | --- | --- |
 | 공통 계약·초기값 | `src/kv_cache_eval/common/schemas.py`, `state.py` |
-| 기술 조사·RAG | `src/kv_cache_eval/features/technical_research/node.py`, `rag.py` |
+| 기술 조사·RAG | `src/kv_cache_eval/features/technical_research/node.py`, `infinigen/` |
 | TRL | `src/kv_cache_eval/features/maturity/node.py` |
 | 시장성 | `src/kv_cache_eval/features/market/node.py` |
 | 이해관계자 | `src/kv_cache_eval/features/stakeholders/node.py` |
@@ -127,7 +157,7 @@ flowchart TD
 | 보고서 | `src/kv_cache_eval/features/report/node.py` |
 | 배선·재조사 | `src/kv_cache_eval/graph/workflow.py`, `gates.py` |
 
-기술 조사는 재사용 함수 `research_technology(state, technology)`를 구현하고 KIVI/InfiniGen 결과를 각각 별도 키에 반환합니다. 고른 RAG 원문 총합은 **200페이지 이하**로 관리합니다. 200페이지는 채울 목표나 보고서 분량이 아닙니다. `rag.py`에 BGE-M3 토큰 기준 분할, dense 검색, 출처·페이지 추적을 구현합니다. [모델 카드](https://huggingface.co/BAAI/bge-m3)는 검색 질의에 별도의 instruction 접두어를 요구하지 않습니다. 원문은 `data/documents/`에 로컬로 두고 저장소에는 포함하지 않습니다. 인덱스·캐시·`.env`·PDF도 저장하지 않습니다.
+KIVI와 InfiniGen 결과는 각각 별도 State 키에 반환합니다. 고른 RAG 원문 총합은 **200페이지 이하**로 관리합니다. 200페이지는 채울 목표나 보고서 분량이 아닙니다. [모델 카드](https://huggingface.co/BAAI/bge-m3)는 검색 질의에 별도의 instruction 접두어를 요구하지 않습니다. 원문·인덱스·캐시·`.env`는 저장소에 포함하지 않습니다.
 
 보고서는 **SUMMARY**로 시작해 **REFERENCE**로 끝나며 실제 사용한 근거만 인용해야 합니다. PDF 출력은 후속 기능입니다.
 

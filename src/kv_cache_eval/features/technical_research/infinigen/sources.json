@@ -1,0 +1,39 @@
+{
+  "collection_id": "infinigen-rag-100p",
+  "page_budget": 100,
+  "documents": [
+    {
+      "document_id": "infinigen-arxiv-v1",
+      "title": "InfiniGen: Efficient Generative Inference of Large Language Models with Dynamic KV Cache Management",
+      "source_url": "https://arxiv.org/pdf/2406.19707v1",
+      "version": "arXiv v1 (2024-06-28)",
+      "evidence_role": "primary",
+      "subject_technology": "InfiniGen",
+      "file": "01_InfiniGen_arxiv_2406.19707v1.pdf",
+      "page_count": 18,
+      "sha256": "267d689a1ded953f076eb93976c0ebeac1ad02029f1f7c9dd1c947aa05d7cb5f"
+    },
+    {
+      "document_id": "flexgen-icml-2023",
+      "title": "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU",
+      "source_url": "https://proceedings.mlr.press/v202/sheng23a/sheng23a.pdf",
+      "version": "ICML 2023 / PMLR 202 conference PDF",
+      "evidence_role": "system_background",
+      "subject_technology": "FlexGen",
+      "file": "02_FlexGen_ICML2023.pdf",
+      "page_count": 23,
+      "sha256": "7cd9673c37640011d38ef4b8595f5e1e09a85b1f803a3734f19c97ca66c75b9e"
+    },
+    {
+      "document_id": "h2o-neurips-2023",
+      "title": "H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models",
+      "source_url": "https://proceedings.neurips.cc/paper_files/paper/2023/file/6ceefa7b15572587b78ecfcebb2827f8-Paper-Conference.pdf",
+      "version": "NeurIPS 2023 conference PDF, including appendices",
+      "evidence_role": "comparison_background",
+      "subject_technology": "H2O",
+      "file": "03_H2O_NeurIPS2023.pdf",
+      "page_count": 50,
+      "sha256": "ff4ba98e426219871231e0950dd644e6d1887231b4305950aa6a3a863e5213fd"
+    }
+  ]
+}
