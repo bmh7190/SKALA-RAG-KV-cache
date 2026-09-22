@@ -6,6 +6,8 @@ API 키 없이도(오프라인 smoke test와 동일한 기조) 노드 로직만 
 
 import unittest
 
+from pydantic import ValidationError
+
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.stakeholders.criteria import STAKEHOLDER_CRITERIA
 from kv_cache_eval.features.stakeholders.node import (
@@ -46,7 +48,6 @@ class StakeholderNodeTest(unittest.TestCase):
             assessments = [
                 _StakeholderAssessment(
                     stakeholder_group=first.group,
-                    criterion=first.criterion,
                     judgment="운영 효율 이점이 확인됨",
                     score=4,
                     rationale="근거에서 메모리 절감을 직접 확인",
@@ -65,7 +66,7 @@ class StakeholderNodeTest(unittest.TestCase):
             e for e in result["evaluations"] if e["technology"] == "KIVI" and e["stakeholder_group"] == first.group
         )
         self.assertEqual(kivi_operator["score"], 4)
-        self.assertEqual(kivi_operator["criterion"], first.criterion)
+        self.assertEqual(kivi_operator["criterion"], first.criterion)  # criterion은 그룹으로부터 자동 채워짐
         self.assertEqual(kivi_operator["evidence_ids"], ["kivi-1"])
         self.assertEqual(kivi_operator["basis_status"], "source_checked")
 
@@ -86,6 +87,23 @@ class StakeholderNodeTest(unittest.TestCase):
         self.assertEqual(result["evaluations"], [])
         self.assertTrue(any("기술조사 결과가 아직 없어" in n for n in result["notes"]))
 
+    def test_no_verified_evidence_skips_llm_call(self):
+        state = new_state()
+        # 근거는 있지만 아직 검증(source_checked)되지 않은 경우 — LLM을 호출하지 않고 바로 보류해야 함.
+        state["kivi_evidence"] = {
+            "evidence": [_make_evidence("kivi-1", "KIVI", "미검증 주장", verification_status="unverified")],
+            "notes": [],
+        }
+        state["infinigen_evidence"] = {"evidence": [], "notes": []}
+
+        def fake_llm(*, technology, evidence):
+            raise AssertionError("검증된 근거가 없으면 LLM을 호출하지 않아야 한다")
+
+        result = evaluate(state, llm_call=fake_llm)["stakeholder_eval"]
+        kivi_entries = [e for e in result["evaluations"] if e["technology"] == "KIVI"]
+        self.assertEqual(len(kivi_entries), len(STAKEHOLDER_CRITERIA))
+        self.assertTrue(all(e["score"] is None for e in kivi_entries))
+
     def test_hallucinated_evidence_id_is_dropped_and_downgraded(self):
         state = new_state()
         state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
@@ -100,7 +118,6 @@ class StakeholderNodeTest(unittest.TestCase):
                 assessments=[
                     _StakeholderAssessment(
                         stakeholder_group=competitor.group,
-                        criterion=competitor.criterion,
                         judgment="차별성이 있음",
                         score=4,
                         rationale="목록에 없는 id를 인용함",
@@ -121,6 +138,57 @@ class StakeholderNodeTest(unittest.TestCase):
         self.assertEqual(entry["evidence_ids"], [])
         self.assertEqual(entry["basis_status"], "unverified")
         self.assertTrue(any("확인되지 않은 근거 ID" in n for n in result["notes"]))
+
+    def test_unknown_group_name_is_rejected_at_construction(self):
+        # 모델이 5개 그룹 이름 중 하나가 아닌 값을 반환하면 pydantic 단계에서 즉시 걸려야 한다
+        # (자유 텍스트였을 때는 이게 통과돼서 항목이 중복 생성되는 문제가 있었음).
+        with self.assertRaises(ValidationError):
+            _StakeholderAssessment(
+                stakeholder_group=STAKEHOLDER_CRITERIA[0].group + " ",  # 사소한 변형
+                judgment="x",
+                score=4,
+                rationale=None,
+                evidence_ids=[],
+                uncertainty=None,
+                basis_status="source_checked",
+            )
+
+    def test_llm_failure_for_one_technology_does_not_crash_the_other(self):
+        state = new_state()
+        state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
+        state["infinigen_evidence"] = {"evidence": [_make_evidence("inf-1", "InfiniGen", "설명")], "notes": []}
+
+        def flaky_llm(*, technology, evidence):
+            if technology == "KIVI":
+                raise RuntimeError("일시적인 API 오류 가정")
+            return _StakeholderAssessmentBatch(
+                assessments=[
+                    _StakeholderAssessment(
+                        stakeholder_group=STAKEHOLDER_CRITERIA[0].group,
+                        judgment="ok",
+                        score=5,
+                        rationale=None,
+                        evidence_ids=["inf-1"],
+                        uncertainty=None,
+                        basis_status="source_checked",
+                    )
+                ],
+                notes=[],
+            )
+
+        result = evaluate(state, llm_call=flaky_llm)["stakeholder_eval"]
+
+        kivi_entries = [e for e in result["evaluations"] if e["technology"] == "KIVI"]
+        self.assertEqual(len(kivi_entries), len(STAKEHOLDER_CRITERIA))
+        self.assertTrue(all(e["score"] is None for e in kivi_entries))
+        self.assertTrue(any("LLM 호출 실패" in n for n in result["notes"]))
+
+        infinigen_first = next(
+            e
+            for e in result["evaluations"]
+            if e["technology"] == "InfiniGen" and e["stakeholder_group"] == STAKEHOLDER_CRITERIA[0].group
+        )
+        self.assertEqual(infinigen_first["score"], 5)
 
 
 if __name__ == "__main__":
