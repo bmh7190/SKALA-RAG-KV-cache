@@ -127,6 +127,10 @@ def _evaluate_technology(
     evaluations: list[Evaluation] = []
     seen_groups: set[str] = set()
     for item in batch.assessments:
+        if item.stakeholder_group in seen_groups:
+            # 같은 이해관계자에 대해 두 번째 이상 반환된 평가는 무시한다 (첫 번째만 채택).
+            notes.append(f"{technology}/{item.stakeholder_group}: 같은 이해관계자에 대한 중복 평가를 무시함")
+            continue
         seen_groups.add(item.stakeholder_group)
         criterion = _STAKEHOLDER_BY_GROUP[item.stakeholder_group].criterion
 

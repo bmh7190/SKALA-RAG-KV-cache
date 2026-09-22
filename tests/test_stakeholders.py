@@ -153,6 +153,39 @@ class StakeholderNodeTest(unittest.TestCase):
                 basis_status="source_checked",
             )
 
+    def test_duplicate_valid_group_is_ignored_after_the_first(self):
+        state = new_state()
+        state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
+        state["infinigen_evidence"] = {"evidence": [], "notes": []}
+
+        first = STAKEHOLDER_CRITERIA[0]
+
+        def dup_llm(*, technology, evidence):
+            if technology != "KIVI":
+                return _StakeholderAssessmentBatch(assessments=[], notes=[])
+            return _StakeholderAssessmentBatch(
+                assessments=[
+                    _StakeholderAssessment(
+                        stakeholder_group=first.group, judgment="a", score=3,
+                        rationale=None, evidence_ids=["kivi-1"], uncertainty=None, basis_status="source_checked",
+                    ),
+                    _StakeholderAssessment(
+                        stakeholder_group=first.group, judgment="b", score=5,
+                        rationale=None, evidence_ids=["kivi-1"], uncertainty=None, basis_status="source_checked",
+                    ),
+                ],
+                notes=[],
+            )
+
+        result = evaluate(state, llm_call=dup_llm)["stakeholder_eval"]
+        kivi_entries = [e for e in result["evaluations"] if e["technology"] == "KIVI"]
+        self.assertEqual(len(kivi_entries), len(STAKEHOLDER_CRITERIA))
+
+        matches = [e for e in kivi_entries if e["stakeholder_group"] == first.group]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["score"], 3)  # 첫 번째 것만 채택
+        self.assertTrue(any("중복 평가를 무시함" in n for n in result["notes"]))
+
     def test_llm_failure_for_one_technology_does_not_crash_the_other(self):
         state = new_state()
         state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
