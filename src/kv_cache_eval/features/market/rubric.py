@@ -8,7 +8,6 @@ from collections.abc import Iterable
 from math import isfinite
 from typing import Literal, NamedTuple
 
-
 MARKET_GROWTH = "시장 규모·성장성"
 COMMERCIAL_ADOPTION = "상용화·채택 현황"
 ECOSYSTEM_SUPPORT = "생태계 지지"
