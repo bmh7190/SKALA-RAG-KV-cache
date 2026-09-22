@@ -6,28 +6,45 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
+from kv_cache_eval.common.citations import checked_inline_ids, collect_verified_evidence
 from kv_cache_eval.common.config import load_environment
-from kv_cache_eval.common.schemas import Evidence, ReportDraft, Synthesis
+from kv_cache_eval.common.schemas import Evidence, EvidenceGap, ReportDraft, Synthesis
 from kv_cache_eval.common.state import State, StateUpdate
 
 
 REPORT_SECTION_TITLES = (
     "SUMMARY",
     "1. 분석 배경",
-    "2. 기술 선정 및 개요",
-    "3. 평가 기준 및 방법",
-    "4. 관점별 평가 결과",
-    "5. 종합 평가 및 시사점",
-    "6. 한계점",
+    "2. 평가 대상 기술 선정",
+    "3. 기술 개요",
+    "4. 관점별 평가",
+    "5. 관점 종합 및 시사점",
+    "6. 분석 한계 및 편향 방지",
     "REFERENCE",
 )
 
-DEFAULT_PDF_PATH = Path("outputs/kv_cache_evaluation_report.pdf")
+DEFAULT_PDF_PATH = Path("output/pdf/kv_cache_evaluation_report.pdf")
+DEFAULT_FONT_PATHS = (
+    Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
+    Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    Path("/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf"),
+    Path("C:/Windows/Fonts/malgun.ttf"),
+)
 
 
-def _get_llm() -> ChatOpenAI:
+class _ReportSection(BaseModel):
+    title: str
+    content: str
+
+
+class _ReportResponse(BaseModel):
+    sections: list[_ReportSection]
+    cited_evidence_ids: list[str] = Field(default_factory=list)
+
+
+def _get_llm():
     """환경변수에 지정된 OpenAI 생성 모델을 만든다."""
     load_environment()
 
@@ -46,9 +63,13 @@ def _get_llm() -> ChatOpenAI:
     if not api_key:
         raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
 
+    from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model_name,
         api_key=api_key,
+        max_retries=0,
+        timeout=45,
     )
 
 
@@ -66,26 +87,8 @@ def _require_value(state: State, key: str) -> Any:
 
 
 def _collect_evidence(state: State) -> dict[str, Evidence]:
-    """기술 조사와 시장성 조사 결과를 근거 ID 기준으로 정리한다."""
-    evidence_by_id: dict[str, Evidence] = {}
-
-    for key in (
-        "kivi_evidence",
-        "infinigen_evidence",
-        "market_evidence",
-    ):
-        research_result = state.get(key)
-
-        if research_result is None:
-            continue
-
-        for evidence in research_result.get("evidence", []):
-            evidence_id = evidence.get("id")
-
-            if evidence_id:
-                evidence_by_id[evidence_id] = evidence
-
-    return evidence_by_id
+    """출처가 확인된 기술·시장·도메인 근거를 ID 기준으로 정리한다."""
+    return collect_verified_evidence(state)
 
 
 def _format_reference(evidence: Evidence) -> str:
@@ -141,18 +144,22 @@ def _build_reference_text(
 
 
 def _normalize_sections(
-    raw_report: ReportDraft,
+    raw_report: dict[str, Any],
     reference_text: str,
+    evidence_gaps: list[EvidenceGap] | None,
 ) -> list[tuple[str, str]]:
     """LLM 결과를 지정된 보고서 목차 순서로 정규화한다."""
     generated_sections: dict[str, str] = {}
 
     for section in raw_report.get("sections", []):
-        if not isinstance(section, (list, tuple)) or len(section) != 2:
+        if isinstance(section, dict):
+            title = str(section.get("title", "")).strip()
+            content = str(section.get("content", "")).strip()
+        elif isinstance(section, (list, tuple)) and len(section) == 2:
+            title = str(section[0]).strip()
+            content = str(section[1]).strip()
+        else:
             continue
-
-        title = str(section[0]).strip()
-        content = str(section[1]).strip()
 
         if title:
             generated_sections[title] = content
@@ -167,6 +174,15 @@ def _normalize_sections(
 
             if not content:
                 content = "해당 항목의 분석 결과가 생성되지 않았습니다."
+            if title == "6. 분석 한계 및 편향 방지":
+                if evidence_gaps is None:
+                    content += "\n\n미해결 근거 공백: 근거 검토가 완료되지 않았습니다."
+                elif evidence_gaps:
+                    gaps = "\n".join(
+                        f"- {gap['technology'] or '공통'} / {gap['criterion']}: {gap['reason']}"
+                        for gap in evidence_gaps
+                    )
+                    content += f"\n\n미해결 근거 공백:\n{gaps}"
 
         normalized_sections.append((title, content))
 
@@ -174,29 +190,33 @@ def _normalize_sections(
 
 
 def _normalize_report(
-    raw_report: ReportDraft,
+    raw_report: dict[str, Any],
     synthesis: Synthesis,
     evidence_by_id: dict[str, Evidence],
+    evidence_gaps: list[EvidenceGap] | None,
 ) -> ReportDraft:
     """보고서의 근거 ID와 섹션을 State 스키마에 맞게 정리한다."""
-    requested_ids = list(raw_report.get("cited_evidence_ids", []))
-    requested_ids.extend(synthesis.get("cited_evidence_ids", []))
-
-    cited_ids = [
-        evidence_id
-        for evidence_id in dict.fromkeys(requested_ids)
-        if evidence_id in evidence_by_id
-    ]
+    valid_ids = set(evidence_by_id)
+    declared_ids = [*raw_report.get("cited_evidence_ids", []),
+                    *synthesis.get("cited_evidence_ids", [])]
+    unknown = set(declared_ids) - valid_ids
+    if unknown:
+        raise ValueError(f"보고서에 확인되지 않은 근거 ID가 있습니다: {sorted(unknown)}")
+    sections = _normalize_sections(
+        raw_report=raw_report,
+        reference_text="",
+        evidence_gaps=evidence_gaps,
+    )
+    body_texts = [content for title, content in sections if title != "REFERENCE"]
+    # REFERENCE는 실제 본문에 등장한 확인된 인용만 싣는다.
+    cited_ids = checked_inline_ids(body_texts, valid_ids)
 
     reference_text = _build_reference_text(
         cited_evidence_ids=cited_ids,
         evidence_by_id=evidence_by_id,
     )
 
-    sections = _normalize_sections(
-        raw_report=raw_report,
-        reference_text=reference_text,
-    )
+    sections[-1] = ("REFERENCE", reference_text)
 
     return {
         "sections": sections,
@@ -220,6 +240,19 @@ def _resolve_pdf_path() -> Path:
     return DEFAULT_PDF_PATH
 
 
+def _resolve_font_path() -> Path:
+    configured = os.getenv("REPORT_FONT_PATH", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return path
+        raise RuntimeError("REPORT_FONT_PATH에 지정한 한글 TTF 파일을 찾을 수 없습니다")
+    for path in DEFAULT_FONT_PATHS:
+        if path.is_file():
+            return path
+    raise RuntimeError("한글 TTF 글꼴이 없습니다. REPORT_FONT_PATH에 설치된 .ttf 경로를 설정하세요")
+
+
 def _write_pdf(report: ReportDraft, output_path: Path) -> None:
     """구조화된 보고서를 한글 PDF 파일로 저장한다."""
     try:
@@ -229,7 +262,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (
             PageBreak,
             Paragraph,
@@ -245,10 +278,9 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # ReportLab에서 제공하는 한국어 CID 폰트를 사용한다.
-    # 운영체제별 로컬 폰트 경로에 의존하지 않도록 설정한다.
-    font_name = "HYSMyeongJo-Medium"
-    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    # TTF를 PDF에 포함해 보는 환경의 Adobe-Korea1 언어팩에 의존하지 않는다.
+    font_name = "ReportKorean"
+    pdfmetrics.registerFont(TTFont(font_name, str(_resolve_font_path())))
 
     document = SimpleDocTemplate(
         str(output_path),
@@ -319,7 +351,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
 
     story = [
         Paragraph(
-            "KV Cache 최적화 기술 다관점 평가 보고서",
+            "KV Cache 최적화 기술<br/>다관점 평가 보고서",
             title_style,
         ),
         Paragraph(
@@ -376,6 +408,7 @@ def write_report(state: State) -> StateUpdate:
         "selected_technologies": state["selected_technologies"],
         "domain_and_criteria": state["domain_and_criteria"],
         "synthesis": synthesis,
+        "evidence_gaps": state["evidence_gaps"],
         "evaluations": {
             "maturity": maturity_eval,
             "market": market_eval,
@@ -404,47 +437,52 @@ def write_report(state: State) -> StateUpdate:
 4. 입력에 존재하지 않는 도입 사례나 성능 수치를 만들지 마십시오.
 5. 근거를 사용할 때는 문장에 [근거 ID] 형식으로 표시하십시오.
 6. 제공된 evidence에 없는 근거 ID를 만들지 마십시오.
+   cited_evidence_ids에는 본문에서 실제 사용한 ID만 넣으십시오.
 7. 공개 자료 기반 TRL은 추정이라는 점을 명시하십시오.
 8. 논문 환경과 실제 운영 환경의 차이를 한계에 포함하십시오.
 9. REFERENCE 내용은 코드에서 실제 인용 근거로 다시 작성하므로,
    임의의 자료를 추가하지 마십시오.
 10. 모든 본문은 한국어로 작성하십시오.
+11. evidence_gaps의 미해결 항목은 6장에서 빠짐없이 밝히십시오.
 
 보고서 섹션은 반드시 다음 순서와 정확한 제목을 사용하십시오.
 1. SUMMARY
 2. 1. 분석 배경
-3. 2. 기술 선정 및 개요
-4. 3. 평가 기준 및 방법
-5. 4. 관점별 평가 결과
-6. 5. 종합 평가 및 시사점
-7. 6. 한계점
+3. 2. 평가 대상 기술 선정
+4. 3. 기술 개요
+5. 4. 관점별 평가
+6. 5. 관점 종합 및 시사점
+7. 6. 분석 한계 및 편향 방지
 8. REFERENCE
 
 작성 기준:
 - SUMMARY는 개요 목록이 아니라 전체 평가 결과의 핵심 요약입니다.
 - SUMMARY는 PDF 반 페이지를 넘지 않도록 약 500~700자로 작성하십시오.
-- 기술 선정 및 개요에는 KIVI와 InfiniGen의 선정 이유,
-  핵심 원리와 한계를 포함하십시오.
-- 관점별 평가 결과에는 기술 성숙도, 시장성, 이해관계자,
-  도메인 적용성을 모두 포함하십시오.
-- 종합 평가 및 시사점에는 공통점, 차이점, 상충 관계,
-  기술별 적용 조건을 포함하십시오.
-- 한계점에는 공개 정보 기반 분석, 논문과 운영 환경의 차이,
-  확증편향을 줄이기 위한 조치를 포함하십시오.
+- 1장은 1.1 KV Cache의 역할, 1.2 KV Cache 병목 문제, 1.3 분석 목적을 다루십시오.
+- 2장은 2.1 KIVI, 2.2 InfiniGen, 2.3 두 기술의 접근 방식 비교를 다루십시오.
+- 3장은 3.1 KIVI, 3.2 InfiniGen, 3.3 실험 결과 해석 기준을 다루십시오.
+- 4장은 4.1 기술 성숙도, 4.2 시장성, 4.3 이해관계자, 4.4 도메인 적용을 다루십시오.
+- 5장은 5.1 관점별 평가 요약, 5.2 관점 간 차이 및 Trade-off,
+  5.3 적용 조건에 따른 해석을 다루십시오.
+- 6장은 6.1 공개 정보 기반 평가의 한계, 6.2 실험 조건 차이,
+  6.3 확증편향 방지 조치를 다루십시오.
 - REFERENCE 섹션은 빈 문자열로 두어도 됩니다.
   실제 사용된 근거만 코드에서 입력합니다.
 
 입력 데이터:
 {json.dumps(report_input, ensure_ascii=False, indent=2)}
 
-ReportDraft 구조에 맞춰 다음 값을 생성하십시오.
-- sections: (섹션 제목, 본문) 쌍의 목록
+다음 구조로 결과를 생성하십시오.
+- sections: title, content 필드를 가진 객체 목록
 - cited_evidence_ids: 보고서 작성에 실제 사용한 근거 ID 목록
 """
 
-    structured_llm = _get_llm().with_structured_output(ReportDraft)
+    structured_llm = _get_llm().with_structured_output(
+        _ReportResponse, method="json_schema", strict=True,
+    )
     raw_report = structured_llm.invoke(prompt)
-
+    if isinstance(raw_report, BaseModel):
+        raw_report = raw_report.model_dump()
     if not isinstance(raw_report, dict):
         raise TypeError("LLM이 ReportDraft 형식의 결과를 반환하지 않았습니다.")
 
@@ -452,6 +490,7 @@ ReportDraft 구조에 맞춰 다음 값을 생성하십시오.
         raw_report=raw_report,
         synthesis=synthesis,
         evidence_by_id=evidence_by_id,
+        evidence_gaps=state["evidence_gaps"],
     )
 
     pdf_path = _resolve_pdf_path()

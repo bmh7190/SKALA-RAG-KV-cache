@@ -8,7 +8,10 @@ from kv_cache_eval.common.config import load_environment
 from kv_cache_eval.common.schemas import Technology
 from kv_cache_eval.common.state import State, StateUpdate
 from kv_cache_eval.features.market.analysis import Analyse, MarketAnalysis, materialize_analysis, merge_results
-from kv_cache_eval.features.market.research import Search, collect_market_sources, tavily_search
+from kv_cache_eval.features.market.research import (
+    Search, TavilyRateLimitError, collect_market_sources, tavily_search,
+)
+from kv_cache_eval.features.market.rubric import MARKET_GROWTH, COMMERCIAL_ADOPTION, ECOSYSTEM_SUPPORT
 
 
 class MarketRuntimeConfig(NamedTuple):
@@ -33,7 +36,7 @@ def validate_runtime_config(environment: Mapping[str, str]) -> MarketRuntimeConf
 def _openai_analyst(config: MarketRuntimeConfig) -> Analyse:
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=config.model, temperature=0)
+    llm = ChatOpenAI(model=config.model, temperature=0, max_retries=0, timeout=45)
     structured = llm.with_structured_output(MarketAnalysis, method="json_schema", strict=True)
 
     def analyse(technology: Technology, hits):
@@ -48,8 +51,14 @@ def _openai_analyst(config: MarketRuntimeConfig) -> Analyse:
 상용화·채택은 다수 운영=multiple_production, 1건 운영=single_production,
 외부 통합/Pilot=external_integration_or_pilot, 저자 공개 구현·프로토타입만 있음=
 public_prototype_only, 논문 단계=research_only 중 하나다. 확인할 수 없으면 null이다.
+저자의 공개 GitHub 구현을 본문에서 확인했다면 외부 운영이 미확인이어도
+public_prototype_only로 분류한다. 운영 미확인을 운영 부재로 단정하지 않는다.
 생태계 사례는 동일 제공자의 동일 지원 유형을 중복 기록하지 않는다. KIVI에서 영감을 받은
 파생 구현은 KIVI 자체의 운영 채택과 구분한다. 자료에 없는 URL은 절대 인용하지 않는다.
+supports에는 대상 기술을 직접 지원하는 독립적인 외부 제공자만 넣는다. 저자 논문·저자 코드,
+다른 KV 기술의 지원은 제외한다. 외부 소개글 한 건의 여러 기능을 독립 지원 여러 건으로
+세지 않는다. 가이드가 vLLM 내부 지원이 아니라고 명시하면 framework_integration이 아니다.
+외부 게시글만으로 별도 구현이나 실제 운영을 추정하지 않는다.
 
 검색 자료:
 {sources}
@@ -77,4 +86,25 @@ def evaluate(state: State) -> StateUpdate:
     """Tavily 검색과 구조화 LLM 판단으로 두 기술의 시장성을 평가한다."""
     load_environment()
     config = validate_runtime_config(os.environ)
-    return build_market_node(tavily_search(), _openai_analyst(config))(state)
+    try:
+        return build_market_node(tavily_search(), _openai_analyst(config))(state)
+    except TavilyRateLimitError:
+        previous_evidence = state.get("market_evidence")
+        previous_eval = state.get("market_eval")
+        if previous_evidence is not None and previous_eval is not None:
+            note = "이번 재검색은 Tavily 429 실패, 이번 실행의 이전 시장평가 재사용"
+            return {
+                "market_evidence": {**previous_evidence, "notes": [*previous_evidence["notes"], note]},
+                "market_eval": {**previous_eval, "notes": [*previous_eval["notes"], note]},
+            }
+        note = "Tavily 429 요청 제한으로 시장 검색 실패; 평가 근거와 점수 미확인"
+        evaluations = [{
+            "technology": technology, "criterion": criterion,
+            "judgment": None, "score": None, "rationale": None,
+            "evidence_ids": [], "uncertainty": note, "basis_status": "unverified",
+        } for technology in state["selected_technologies"]
+          for criterion in (MARKET_GROWTH, COMMERCIAL_ADOPTION, ECOSYSTEM_SUPPORT)]
+        return {
+            "market_evidence": {"evidence": [], "notes": [note]},
+            "market_eval": {"evaluations": evaluations, "notes": [note]},
+        }

@@ -1,14 +1,55 @@
 """시장성 노드와 공통 근거 게이트 통합 테스트."""
 
 import unittest
+from copy import deepcopy
+from unittest.mock import patch
 
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.market.analysis import CitedAssessment, MarketAnalysis
-from kv_cache_eval.features.market.node import build_market_node, validate_runtime_config
+from kv_cache_eval.features.market.node import (
+    MarketRuntimeConfig, build_market_node, evaluate, validate_runtime_config,
+)
+from kv_cache_eval.features.market.research import TavilyRateLimitError
 from kv_cache_eval.graph.gates import check_evidence
 
 
 class MarketNodeTest(unittest.TestCase):
+    def _evaluate_after_429(self, state):
+        def limited(query):
+            raise TavilyRateLimitError("Tavily 429 요청 제한: 3회 시도 후 중단")
+
+        with patch("kv_cache_eval.features.market.node.load_environment"), \
+             patch("kv_cache_eval.features.market.node.validate_runtime_config",
+                   return_value=MarketRuntimeConfig("openai", "fixture-model")), \
+             patch("kv_cache_eval.features.market.node.tavily_search", return_value=limited), \
+             patch("kv_cache_eval.features.market.node._openai_analyst", return_value=lambda *args: None):
+            return evaluate(state)
+
+    def test_429_reuses_previous_market_results_without_mutating_state(self):
+        state = new_state()
+        state["market_evidence"] = {"evidence": [{"id": "previous-evidence"}], "notes": ["이전 검색"]}
+        state["market_eval"] = {"evaluations": [{"score": 2, "basis_status": "source_checked"}],
+                                "notes": ["이전 평가"]}
+        before = deepcopy(state)
+        update = self._evaluate_after_429(state)
+        self.assertEqual(state, before)
+        self.assertEqual(update["market_evidence"]["evidence"], before["market_evidence"]["evidence"])
+        self.assertEqual(update["market_eval"]["evaluations"], before["market_eval"]["evaluations"])
+        self.assertIn("이번 실행의 이전 시장평가 재사용", update["market_eval"]["notes"][-1])
+        self.assertIn("이번 재검색은 Tavily 429 실패", update["market_evidence"]["notes"][-1])
+
+    def test_first_round_429_returns_six_unverified_results(self):
+        state = new_state()
+        update = self._evaluate_after_429(state)
+        self.assertIsNone(state["market_evidence"])
+        self.assertIsNone(state["market_eval"])
+        self.assertEqual(update["market_evidence"]["evidence"], [])
+        self.assertEqual(len(update["market_eval"]["evaluations"]), 6)
+        self.assertTrue(all(row["judgment"] is None and row["score"] is None
+                            and row["evidence_ids"] == [] and row["basis_status"] == "unverified"
+                            for row in update["market_eval"]["evaluations"]))
+        self.assertIn("429", update["market_eval"]["notes"][0])
+
     def test_injected_node_evaluates_both_technologies_without_network(self):
         def search(query):
             slug = str(abs(hash(query)))

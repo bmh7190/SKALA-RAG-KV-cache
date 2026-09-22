@@ -92,18 +92,9 @@ class SmokeTest(unittest.TestCase):
         self.assertTrue(final["evidence_gaps"])
         self.assertEqual(final["synthesis"]["unresolved_gaps"], final["evidence_gaps"])
 
-    def test_default_function_node_reports_unimplemented(self):
-        with self.assertRaises(NotImplementedError):
-            # 기술 조사·시장성·이해관계자·도메인 평가는 실제 API를 사용할 수 있어 대체한다.
-            build_graph({
-                "technical_research": lambda state: {
-                    "kivi_evidence": {"evidence": [], "notes": []},
-                    "infinigen_evidence": {"evidence": [], "notes": []},
-                },
-                "market": lambda state: {"market_eval": {"evaluations": [], "notes": []}},
-                "stakeholders": lambda state: {"stakeholder_eval": {"evaluations": [], "notes": []}},
-                "domain": lambda state: {"domain_eval": {"evaluations": [], "notes": []}},
-            }).invoke(new_state())
+    def test_default_graph_compiles_without_optional_llm_import(self):
+        # 기본 노드는 컴파일만 확인한다. 실행에는 외부 검색·LLM 호출이 포함된다.
+        self.assertIsNotNone(build_graph())
 
 
 if __name__ == "__main__":

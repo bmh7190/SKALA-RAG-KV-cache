@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from kv_cache_eval.common.state import new_state
-from kv_cache_eval.features.domain.node import evaluate
+from kv_cache_eval.features.domain.node import DEFAULT_MAX_INPUT_BYTES, evaluate
 from kv_cache_eval.features.domain.prompt import OUTPUT_SCHEMA, VERIFY_SCHEMA
 from kv_cache_eval.features.domain.rubric import DOMAIN_RUBRIC
 
@@ -22,6 +22,27 @@ def evidence(technology, claim):
 
 
 class DomainNodeTest(unittest.TestCase):
+    def test_default_budget_accepts_retry_notes_while_explicit_small_limit_still_applies(self):
+        self.assertEqual(DEFAULT_MAX_INPUT_BYTES, 131072)
+        state = new_state()
+        state["kivi_evidence"] = {
+            "evidence": [evidence("KIVI", "검증용 실험 문장")],
+            "notes": ["재조사 기록 " + "x" * 40000],
+        }
+        state["infinigen_evidence"] = {"evidence": [], "notes": []}
+
+        with patch("kv_cache_eval.features.domain.node.invoke_structured",
+                   return_value={"evaluations": [], "notes": []}) as llm:
+            update = evaluate(state)
+        self.assertEqual(llm.call_count, 1)
+        self.assertFalse(any("input_budget_exceeded" in note for note in update["domain_eval"]["notes"]))
+
+        with patch("kv_cache_eval.features.domain.node.invoke_structured",
+                   side_effect=AssertionError("작은 입력 한도에서 LLM 호출 금지")) as llm:
+            limited = evaluate(state, max_input_bytes=32000)
+        llm.assert_not_called()
+        self.assertTrue(any("input_budget_exceeded" in note for note in limited["domain_eval"]["notes"]))
+
     def test_reported_memory_reduction_is_scored_from_checked_quote(self):
         state = new_state()
         claim = "GPU memory decreased by 50%"

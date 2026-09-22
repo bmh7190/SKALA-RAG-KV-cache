@@ -51,7 +51,7 @@ class SupportsStakeholderLLMCall(Protocol):
 
 
 def _default_llm_call(*, technology: Technology, domain: str, evidence: list[Evidence]) -> _StakeholderAssessmentBatch:
-    """환경변수로 지정된 OpenAI 모델을 호출한다 (팀 기본값: LLM_MODEL=gpt-5.4-mini).
+    """환경변수로 지정된 OpenAI 모델을 호출한다.
 
     테스트에서는 이 함수를 쓰지 않고 evaluate()에 가짜 llm_call을 주입한다 (langchain-openai
     설치나 API 키가 없어도 노드 로직을 검증할 수 있도록). langchain-openai는 base 설치에는
@@ -63,8 +63,14 @@ def _default_llm_call(*, technology: Technology, domain: str, evidence: list[Evi
 
     load_environment()  # 이미 설정된 셸 값은 유지하고, .env가 있으면 채워 넣는다.
 
-    model_name = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "gpt-5.4-mini"
-    llm = ChatOpenAI(model=model_name, temperature=0).with_structured_output(_StakeholderAssessmentBatch)
+    if os.getenv("LLM_PROVIDER", "").strip().lower() != "openai":
+        raise RuntimeError("이해관계자 평가는 LLM_PROVIDER=openai 설정이 필요합니다")
+    model_name = os.getenv("LLM_MODEL", "").strip()
+    if not model_name or not os.getenv("OPENAI_API_KEY", "").strip():
+        raise RuntimeError("LLM_MODEL과 OPENAI_API_KEY 설정이 필요합니다")
+    llm = ChatOpenAI(model=model_name, temperature=0, max_retries=0, timeout=45).with_structured_output(
+        _StakeholderAssessmentBatch, method="json_schema", strict=True,
+    )
 
     criteria_text = "\n".join(
         f"- {c.group}: {c.question}\n  점수 기준: {c.rubric}\n  확인할 근거 유형: {c.evidence_hint}"
