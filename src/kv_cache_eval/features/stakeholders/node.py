@@ -47,10 +47,10 @@ class _StakeholderAssessmentBatch(BaseModel):
 
 
 class SupportsStakeholderLLMCall(Protocol):
-    def __call__(self, *, technology: Technology, evidence: list[Evidence]) -> _StakeholderAssessmentBatch: ...
+    def __call__(self, *, technology: Technology, domain: str, evidence: list[Evidence]) -> _StakeholderAssessmentBatch: ...
 
 
-def _default_llm_call(*, technology: Technology, evidence: list[Evidence]) -> _StakeholderAssessmentBatch:
+def _default_llm_call(*, technology: Technology, domain: str, evidence: list[Evidence]) -> _StakeholderAssessmentBatch:
     """환경변수로 지정된 OpenAI 모델을 호출한다 (팀 기본값: LLM_MODEL=gpt-5.4-mini).
 
     테스트에서는 이 함수를 쓰지 않고 evaluate()에 가짜 llm_call을 주입한다 (langchain-openai
@@ -77,7 +77,11 @@ def _default_llm_call(*, technology: Technology, evidence: list[Evidence]) -> _S
     ) or "(제공된 근거 없음)"
 
     prompt = f"""당신은 KV cache 최적화 기술을 이해관계자 관점에서 평가하는 평가자입니다.
+평가 도메인: {domain}
 평가 대상 기술: {technology}
+
+이해관계자들은 모두 이 도메인({domain})의 맥락에서 KIVI/InfiniGen을 마주하는 주체입니다.
+"운영", "서비스", "시스템"은 전부 이 도메인 안에서의 의미로 해석하세요.
 
 기술의 우열을 판정하지 말고, 각 이해관계자 입장에서 이 기술이 어떻게 평가될지만 기록하세요.
 stakeholder_group은 아래 목록에 있는 이름 그대로만 써야 합니다(다른 표현으로 바꾸지 마세요):
@@ -105,6 +109,7 @@ stakeholder_group은 아래 목록에 있는 이름 그대로만 써야 합니�
 
 def _evaluate_technology(
     technology: Technology,
+    domain: str,
     evidence: list[Evidence],
     llm_call: SupportsStakeholderLLMCall,
     notes: list[str],
@@ -117,7 +122,7 @@ def _evaluate_technology(
         batch = _StakeholderAssessmentBatch(assessments=[], notes=[])
     else:
         try:
-            batch = llm_call(technology=technology, evidence=verified_evidence)
+            batch = llm_call(technology=technology, domain=domain, evidence=verified_evidence)
         except Exception as exc:  # LLM 호출 실패가 다른 기술 평가까지 망가뜨리지 않도록 격리
             notes.append(f"{technology}: LLM 호출 실패로 전체 판단 보류 처리 ({type(exc).__name__}: {exc})")
             batch = _StakeholderAssessmentBatch(assessments=[], notes=[])
@@ -180,6 +185,7 @@ def _evaluate_technology(
 
 
 def evaluate(state: State, llm_call: SupportsStakeholderLLMCall = _default_llm_call) -> StateUpdate:
+    domain = state["domain_and_criteria"]["domain"]
     evaluations: list[Evaluation] = []
     notes: list[str] = []
 
@@ -188,6 +194,6 @@ def evaluate(state: State, llm_call: SupportsStakeholderLLMCall = _default_llm_c
         if research_result is None:
             notes.append(f"{technology}: 기술조사 결과가 아직 없어 이해관계자 평가를 진행하지 못함")
             continue
-        evaluations.extend(_evaluate_technology(technology, research_result["evidence"], llm_call, notes))
+        evaluations.extend(_evaluate_technology(technology, domain, research_result["evidence"], llm_call, notes))
 
     return {"stakeholder_eval": {"evaluations": evaluations, "notes": notes}}

@@ -44,7 +44,8 @@ class StakeholderNodeTest(unittest.TestCase):
 
         first = STAKEHOLDER_CRITERIA[0]
 
-        def fake_llm(*, technology, evidence):
+        def fake_llm(*, technology, domain, evidence):
+            self.assertEqual(domain, "GPU 기반 클라우드 LLM 서비스")
             assessments = [
                 _StakeholderAssessment(
                     stakeholder_group=first.group,
@@ -80,7 +81,7 @@ class StakeholderNodeTest(unittest.TestCase):
     def test_missing_research_result_is_noted_not_crashed(self):
         state = new_state()  # kivi_evidence / infinigen_evidence 모두 아직 None
 
-        def fake_llm(*, technology, evidence):
+        def fake_llm(*, technology, domain, evidence):
             raise AssertionError("근거가 없으면 LLM을 호출하지 않아야 한다")
 
         result = evaluate(state, llm_call=fake_llm)["stakeholder_eval"]
@@ -96,7 +97,7 @@ class StakeholderNodeTest(unittest.TestCase):
         }
         state["infinigen_evidence"] = {"evidence": [], "notes": []}
 
-        def fake_llm(*, technology, evidence):
+        def fake_llm(*, technology, domain, evidence):
             raise AssertionError("검증된 근거가 없으면 LLM을 호출하지 않아야 한다")
 
         result = evaluate(state, llm_call=fake_llm)["stakeholder_eval"]
@@ -111,7 +112,7 @@ class StakeholderNodeTest(unittest.TestCase):
 
         competitor = STAKEHOLDER_CRITERIA[3]  # 경쟁 기술 진영
 
-        def fake_llm(*, technology, evidence):
+        def fake_llm(*, technology, domain, evidence):
             if technology != "KIVI":
                 return _StakeholderAssessmentBatch(assessments=[], notes=[])
             return _StakeholderAssessmentBatch(
@@ -160,7 +161,7 @@ class StakeholderNodeTest(unittest.TestCase):
 
         first = STAKEHOLDER_CRITERIA[0]
 
-        def dup_llm(*, technology, evidence):
+        def dup_llm(*, technology, domain, evidence):
             if technology != "KIVI":
                 return _StakeholderAssessmentBatch(assessments=[], notes=[])
             return _StakeholderAssessmentBatch(
@@ -191,7 +192,7 @@ class StakeholderNodeTest(unittest.TestCase):
         state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
         state["infinigen_evidence"] = {"evidence": [_make_evidence("inf-1", "InfiniGen", "설명")], "notes": []}
 
-        def flaky_llm(*, technology, evidence):
+        def flaky_llm(*, technology, domain, evidence):
             if technology == "KIVI":
                 raise RuntimeError("일시적인 API 오류 가정")
             return _StakeholderAssessmentBatch(
