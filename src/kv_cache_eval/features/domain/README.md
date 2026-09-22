@@ -4,9 +4,9 @@ GPU 기반 클라우드 LLM 서비스에 KIVI와 InfiniGen을 적용할 때의 �
 
 ## State 연결
 
-`node.evaluate(state)`는 `domain_and_criteria["domain"]`, `kivi_evidence`, `infinigen_evidence`를 읽고 `{"domain_eval": ...}`만 반환합니다. `market_evidence`나 `market_eval`은 읽거나 수정하지 않습니다. 도메인 노드는 근거를 새로 수집하지 않으므로 별도의 `domain_evidence`도 만들지 않습니다.
+`node.evaluate(state)`는 `domain_and_criteria["domain"]`, `kivi_evidence`, `infinigen_evidence`를 읽고 `domain_evidence`와 `domain_eval`만 반환합니다. `market_evidence`나 `market_eval`은 읽거나 수정하지 않습니다. `domain_evidence`에는 평가가 실제로 인용한 기술 조사 근거만 원래 ID와 출처를 유지해 담습니다. 새로운 조사 결과를 만들어내지 않습니다.
 
-`domain_eval`에는 두 기술의 여섯 항목씩 총 12개 평가와 `notes`가 들어갑니다. 각 평가의 `evidence_ids`는 해당 기술의 조사 근거 ID를 가리킵니다. 조사 근거는 `source_checked` 상태이고 출처·인용문이 있어야 사용합니다. 근거가 없거나 확인에 실패한 항목은 `basis_status="unverified"`, `score=None`으로 남깁니다.
+`domain_eval`에는 두 기술의 여섯 항목씩 총 12개 평가, 전체 설명 글 `text`, `notes`가 들어갑니다. 평가 기준·점수·판단 이유는 `evaluations`에 유지합니다. 각 평가의 `evidence_ids`는 `domain_evidence`에 복사된 원래 조사 근거 ID를 가리킵니다. 조사 근거는 `source_checked` 상태이고 출처·인용문이 있어야 사용합니다. 근거가 없거나 확인에 실패한 항목은 `basis_status="unverified"`, `score=None`으로 남기고 `domain_evidence`에는 넣지 않습니다.
 
 ## 실행 조건
 
