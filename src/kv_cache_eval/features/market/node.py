@@ -33,7 +33,7 @@ def validate_runtime_config(environment: Mapping[str, str]) -> MarketRuntimeConf
 def _openai_analyst(config: MarketRuntimeConfig) -> Analyse:
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=config.model, temperature=0)
+    llm = ChatOpenAI(model=config.model, temperature=0, max_retries=0, timeout=45)
     structured = llm.with_structured_output(MarketAnalysis, method="json_schema", strict=True)
 
     def analyse(technology: Technology, hits):

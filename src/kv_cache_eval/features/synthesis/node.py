@@ -4,14 +4,22 @@ import json
 import os
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
+from kv_cache_eval.common.citations import checked_inline_ids, collect_verified_evidence
 from kv_cache_eval.common.config import load_environment
 from kv_cache_eval.common.schemas import EvidenceGap, Synthesis
 from kv_cache_eval.common.state import State, StateUpdate
 
 
-def _get_llm() -> ChatOpenAI:
+class _SynthesisResponse(BaseModel):
+    perspective_differences: list[str] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
+    application_conditions: list[str] = Field(default_factory=list)
+    cited_evidence_ids: list[str] = Field(default_factory=list)
+
+
+def _get_llm():
     """환경변수에 지정된 OpenAI 생성 모델을 만든다."""
     load_environment()
 
@@ -30,9 +38,13 @@ def _get_llm() -> ChatOpenAI:
     if not api_key:
         raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
 
+    from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model_name,
         api_key=api_key,
+        max_retries=0,
+        timeout=45,
     )
 
 
@@ -53,26 +65,8 @@ def _require_evaluation(
 
 
 def _collect_valid_evidence_ids(state: State) -> set[str]:
-    """기술 조사와 시장성 조사 결과에 실제 존재하는 근거 ID를 수집한다."""
-    evidence_ids: set[str] = set()
-
-    for key in (
-        "kivi_evidence",
-        "infinigen_evidence",
-        "market_evidence",
-    ):
-        research_result = state.get(key)
-
-        if research_result is None:
-            continue
-
-        for evidence in research_result.get("evidence", []):
-            evidence_id = evidence.get("id")
-
-            if evidence_id:
-                evidence_ids.add(evidence_id)
-
-    return evidence_ids
+    """기술·시장·도메인 결과에서 출처가 확인된 근거 ID만 수집한다."""
+    return set(collect_verified_evidence(state))
 
 
 def _normalize_gaps(state: State) -> list[EvidenceGap]:
@@ -92,16 +86,21 @@ def _normalize_gaps(state: State) -> list[EvidenceGap]:
 
 
 def _validate_synthesis(
-    synthesis: Synthesis,
+    synthesis: dict[str, Any],
     valid_evidence_ids: set[str],
     evidence_gaps: list[EvidenceGap],
 ) -> Synthesis:
-    """LLM 결과를 스키마에 맞게 정규화하고 잘못된 근거 ID를 제거한다."""
-    cited_ids = [
-        evidence_id
-        for evidence_id in synthesis.get("cited_evidence_ids", [])
-        if evidence_id in valid_evidence_ids
-    ]
+    """LLM 결과의 인용을 검증하고 게이트의 미해결 공백을 그대로 보존한다."""
+    lists = ("perspective_differences", "tradeoffs", "application_conditions")
+    inline_ids = checked_inline_ids(
+        [str(item) for key in lists for item in synthesis.get(key, [])],
+        valid_evidence_ids,
+    )
+    declared_ids = synthesis.get("cited_evidence_ids", [])
+    unknown = set(declared_ids) - valid_evidence_ids
+    if unknown:
+        raise ValueError(f"종합에 확인되지 않은 근거 ID가 있습니다: {sorted(unknown)}")
+    cited_ids = list(dict.fromkeys([*declared_ids, *inline_ids]))
 
     return {
         "perspective_differences": [
@@ -168,10 +167,11 @@ def synthesize(state: State) -> StateUpdate:
 5. 평가 결과의 basis_status와 uncertainty를 고려하십시오.
 6. source_checked, inferred, public_estimate, unverified를 구분하십시오.
 7. valid_evidence_ids에 포함되지 않은 근거 ID를 만들지 마십시오.
+   근거에 의존한 문장은 [근거 ID]를 본문에 표시하십시오.
 8. 공개되지 않은 정보는 사실처럼 단정하지 마십시오.
 9. KIVI와 InfiniGen을 함께 사용하는 보완 가능성도 검토하되,
    제공된 근거로 판단할 수 없는 내용은 단정하지 마십시오.
-10. unresolved_gaps는 입력된 evidence_gaps를 기반으로 판단하십시오.
+10. 입력된 evidence_gaps는 미해결 상태로 취급하십시오. 최종 목록은 코드가 그대로 보존합니다.
 11. 모든 결과는 한국어로 작성하십시오.
 
 입력 데이터:
@@ -185,15 +185,16 @@ def synthesize(state: State) -> StateUpdate:
   적용 복잡성 등의 상충 관계 목록
 - application_conditions:
   기술별로 적합하거나 제약이 발생하는 적용 조건 목록
-- unresolved_gaps:
-  공개 자료만으로 판단하기 어려운 근거 공백 목록
 - cited_evidence_ids:
   종합 판단에 실제 사용한 valid_evidence_ids 목록
 """
 
-    structured_llm = _get_llm().with_structured_output(Synthesis)
+    structured_llm = _get_llm().with_structured_output(
+        _SynthesisResponse, method="json_schema", strict=True,
+    )
     raw_synthesis = structured_llm.invoke(prompt)
-
+    if isinstance(raw_synthesis, BaseModel):
+        raw_synthesis = raw_synthesis.model_dump()
     if not isinstance(raw_synthesis, dict):
         raise TypeError("LLM이 Synthesis 형식의 결과를 반환하지 않았습니다.")
 

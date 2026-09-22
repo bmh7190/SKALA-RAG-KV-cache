@@ -68,7 +68,7 @@ def _load_settings(dotenv_values):
             "실행 환경의 LLM_MODEL이 설정 파일과 달라 실행 환경 값을 사용합니다. 모델 설정을 확인하세요.",
         )
     try:
-        timeout = float(setting("DOMAIN_LLM_TIMEOUT_SECONDS") or "60")
+        timeout = float(setting("DOMAIN_LLM_TIMEOUT_SECONDS") or "45")
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError
     except ValueError:
@@ -77,7 +77,7 @@ def _load_settings(dotenv_values):
     if not model_name or not settings["OPENAI_API_KEY"]:
         raise DomainConfigurationError("LLM_MODEL과 OPENAI_API_KEY 설정이 필요합니다")
     return dict(model=model_name, api_key=settings["OPENAI_API_KEY"],
-                timeout=timeout, max_retries=1)
+                timeout=timeout, max_retries=0)
 
 
 def invoke_structured(messages, schema):

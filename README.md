@@ -4,8 +4,8 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 ## 현재 상태
 
-- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, 두 기술의 TRL·시장성·이해관계자·도메인 적합성 평가, 공유 State와 근거 공백 검사, 단일 조사·병렬 평가 Graph 배선.
-- **TODO:** 종합, 최종 보고서·PDF. `main.py`는 기존 전체 Graph를 실행하지만 미구현 노드에서는 중단될 수 있습니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
+- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, 두 기술의 TRL·시장성·이해관계자·도메인 적합성 평가, 공유 State와 근거 공백 검사, 단일 조사·병렬 평가·제한 재조사·종합·최종 보고서 PDF까지 이어지는 Graph.
+- **검증 범위:** 외부 응답을 대체한 오프라인 전체 Graph 테스트와 한글 PDF 렌더를 확인했습니다. 실제 OpenAI/Tavily 결과의 주장 타당성·인용 정확성은 아직 검증하지 않았습니다.
 - 두 기술의 로컬 검색 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
 ## 설치와 실행
@@ -19,15 +19,16 @@ uv sync --locked
 # 팀 전체 개발 도구를 한 번에 설치: RAG, 웹 검색, 보고서, 선택형 OpenAI 연동
 uv sync --locked --all-extras
 
-# 오프라인 단위 테스트 및 그래프 컴파일 확인
-HF_HUB_OFFLINE=1 uv run --locked python -m unittest discover -s tests -v
+# 위 --all-extras 설치와 한글 TTF 글꼴이 준비된 환경에서 실행
+# API 키를 제거하고 소켓 연결을 차단하는 오프라인 테스트(PDF 예시 생성 포함)
+env -u OPENAI_API_KEY -u TAVILY_API_KEY PYTHONPATH=tests/offline_guard:src HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python -m unittest discover -s tests -v
 uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
 
 # main.py 맨 위 QUESTION을 편집한 뒤 전체 Graph 실행
 .venv/bin/python main.py
 ```
 
-`main.py`는 하드코딩한 질문으로 `graph.run(QUESTION)`을 호출합니다. Graph의 단일 기술 조사 노드가 같은 엔진으로 KIVI와 InfiniGen을 조사한 뒤 네 평가 노드로 연결합니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
+`main.py`는 하드코딩한 질문으로 `graph.run(QUESTION)`을 호출합니다. Graph의 단일 기술 조사 노드가 같은 엔진으로 KIVI와 InfiniGen을 조사한 뒤 네 평가 노드, 근거 확인, 종합, 보고서로 연결합니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. `report` 노드가 `REPORT_PDF_PATH` 또는 기본 경로 `output/pdf/kv_cache_evaluation_report.pdf`에 PDF를 생성합니다. 같은 경로의 파일은 덮어쓰므로 기존 보고서를 보존하려면 실행마다 다른 경로를 지정하세요.
 
 `pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
 
@@ -36,10 +37,10 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 | 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용. `python-dotenv`: 명시적 `.env` 로딩 함수에 사용 |
 | `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 두 기술 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
 | `web` | `langchain-tavily`: 웹 검색용 |
-| `report` | `reportlab`: 후속 PDF 생성용 |
+| `report` | `reportlab`: 한글 글꼴을 포함한 PDF 생성용 |
 | `llm-openai` | 두 기술 조사와 구현된 평가에서 `LLM_PROVIDER=openai`로 선택할 때 사용할 클라이언트. 모델의 기본값은 없음 |
 
-전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 미구현 종합·보고서 노드 때문에 기본 전체 실행은 완료되지 않습니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**과 오프라인 테스트는 키·원문·네트워크가 필요 없습니다. `main.py` 전체 실행은 설정된 외부 서비스에 요청합니다.
 
 ### 환경변수와 필요한 키
 
@@ -54,6 +55,8 @@ cp .env.example .env
 | `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 로컬 dense 임베딩이므로 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
 | `OPENAI_API_KEY` | OpenAI 생성 LLM을 실제 호출할 때만 필요 |
 | `TAVILY_API_KEY` | 기술 조사·시장성 평가의 Tavily 웹 검색을 실제 호출할 때 필요 |
+| `REPORT_PDF_PATH` | 최종 PDF 경로. 비우면 `output/pdf/kv_cache_evaluation_report.pdf` |
+| `REPORT_FONT_PATH` | 자동 탐색 경로에 한글 TTF가 없을 때 설치된 `.ttf` 파일 경로. macOS AppleGothic, Linux NanumGothic, Windows Malgun Gothic 경로를 순서대로 확인 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | 추적은 기본 `false`. 사용하기로 선택한 경우에만 `true`와 키·프로젝트 설정 |
 
 `BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. 두 기술의 RAG는 `HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 사용합니다. 모델의 sparse·multi-vector 기능은 사용하지 않습니다.
@@ -71,7 +74,7 @@ embedding_model = get_embedding_model()
 
 ## 그래프
 
-실선은 현재 배선 및 구조적 검사입니다. `TODO` 표시 노드는 함수 틀만 있습니다. 근거 부족 시 최대 `max_research_rounds`번 추가 조사하고 네 평가를 다시 실행합니다. 횟수를 소진하면 `evidence_gaps`를 유지한 채 종합 노드로 전달합니다. 종합 담당자는 미해결 항목을 명시해야 합니다.
+근거 부족 시 최대 `max_research_rounds`번 추가 조사하고 네 평가를 다시 실행합니다. 횟수를 소진하면 `evidence_gaps`를 유지한 채 종합과 보고서로 전달합니다. 보고서의 6장에 미해결 항목을 결정적으로 덧붙입니다.
 
 ```mermaid
 flowchart TD
@@ -87,8 +90,8 @@ flowchart TD
     G --> C[근거 구조 검사]
     C -->|공백 있고 횟수 남음| N[재조사 횟수 증가]
     N --> R
-    C -->|공백 없음 또는 횟수 소진| Y[종합 TODO]
-    Y --> P[보고서 TODO]
+    C -->|공백 없음 또는 횟수 소진| Y[종합]
+    Y --> P[보고서·PDF]
     P --> E[종료]
 ```
 
@@ -157,7 +160,9 @@ LANGSMITH_TRACING=false .venv/bin/python scripts/run_research.py evaluate --tech
 
 KIVI와 InfiniGen 결과는 각각 별도 State 키에 반환합니다. 고른 RAG 원문 총합은 **200페이지 이하**로 관리합니다. 200페이지는 채울 목표나 보고서 분량이 아닙니다. [모델 카드](https://huggingface.co/BAAI/bge-m3)는 검색 질의에 별도의 instruction 접두어를 요구하지 않습니다. 원문·인덱스·캐시·`.env`는 저장소에 포함하지 않습니다.
 
-보고서는 **SUMMARY**로 시작해 **REFERENCE**로 끝나며 실제 사용한 근거만 인용해야 합니다. PDF 출력은 후속 기능입니다.
+보고서는 **SUMMARY**로 시작해 **REFERENCE**로 끝납니다. 가운데에는 설계서 순서대로 1. 분석 배경, 2. 평가 대상 기술 선정, 3. 기술 개요, 4. 관점별 평가, 5. 관점 종합 및 시사점, 6. 분석 한계 및 편향 방지를 둡니다. 본문 `[근거 ID]`가 실제 확인된 Evidence를 가리키는지 검사하고, REFERENCE에는 최종 본문에서 사용한 ID만 기록합니다. 존재하지 않는 ID는 PDF 생성 전에 오류로 처리합니다. 근거 공백은 6장에 빠짐없이 남깁니다.
+
+설계서의 이해관계자 관점은 검색 역할도 언급하지만, 현재 노드는 별도 웹 검색 없이 공통 기술 조사에서 확인한 근거를 재사용합니다. 직접 확인된 반응과 근거 기반 추론, 미확인을 구분하며 실제 반응 자료가 없으면 추론 또는 미확인으로 둡니다. 설계서의 두 기술 HitRate@K/MRR 검증 중 현재 고정 질문집 검색 평가는 InfiniGen에만 있습니다. KIVI 검색 평가는 별도로 필요합니다.
 
 ## 실습 참고
 
