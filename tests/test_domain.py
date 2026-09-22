@@ -22,6 +22,40 @@ def evidence(technology, claim):
 
 
 class DomainNodeTest(unittest.TestCase):
+    def test_reported_memory_reduction_is_scored_from_checked_quote(self):
+        state = new_state()
+        claim = "GPU memory decreased by 50%"
+        state["kivi_evidence"] = {"evidence": [evidence("KIVI", claim)], "notes": []}
+        state["infinigen_evidence"] = {"evidence": [], "notes": []}
+
+        def fake_invoke(messages, schema):
+            if schema is OUTPUT_SCHEMA:
+                return {"evaluations": [{
+                    "technology": "KIVI", "criterion": "GPU 메모리 사용량",
+                    "judgment": "GPU 메모리 감소", "score": None,
+                    "rationale": "인용된 실험에서 50% 감소를 보고함",
+                    "supports": [{"evidence_id": "kivi", "quote": claim}],
+                    "measurement": {"kind": "reported_change", "magnitude": 50,
+                                    "direction": "decrease", "source": {"evidence_id": "kivi", "quote": claim}},
+                    "uncertainty": None,
+                }], "notes": []}
+            self.assertIs(schema, VERIFY_SCHEMA)
+            return {"reviews": [{
+                "technology": "KIVI", "criterion": "GPU 메모리 사용량",
+                "supported": True, "measurement_supported": True,
+                "rubric_supported": False, "reason": "원문에 50% 감소가 명시됨",
+            }]}
+
+        with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke) as llm:
+            update = evaluate(state)
+        self.assertEqual(llm.call_count, 2)
+        memory = next(row for row in update["domain_eval"]["evaluations"]
+                      if row["technology"] == "KIVI" and row["criterion"] == "GPU 메모리 사용량")
+        self.assertEqual(memory["score"], 5)
+        self.assertEqual(memory["evidence_ids"], ["kivi"])
+        self.assertEqual(memory["basis_status"], "inferred")
+        self.assertEqual([item["id"] for item in update["domain_evidence"]["evidence"]], ["kivi"])
+
     def test_covers_all_six_criteria_for_both_technologies(self):
         state = new_state()
         claims = {
