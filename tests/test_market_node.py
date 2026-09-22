@@ -3,8 +3,16 @@
 import unittest
 
 from kv_cache_eval.common.state import new_state
-from kv_cache_eval.features.market.analysis import CitedAssessment, MarketAnalysis
-from kv_cache_eval.features.market.node import build_market_node, validate_runtime_config
+from kv_cache_eval.features.market.analysis import (
+    CitedAssessment,
+    GrowthMetric,
+    MarketAnalysis,
+    SourceCitation,
+)
+from kv_cache_eval.features.market.node import (
+    build_market_node,
+    validate_runtime_config,
+)
 from kv_cache_eval.graph.gates import check_evidence
 
 
@@ -12,22 +20,50 @@ class MarketNodeTest(unittest.TestCase):
     def test_injected_node_evaluates_both_technologies_without_network(self):
         def search(query):
             slug = str(abs(hash(query)))
-            return [{
-                "title": query,
-                "url": f"https://example.com/{slug}",
-                "content": query,
-                "raw_content": query,
-            }]
+            content = f"{query} CAGR 20% from 2025 to 2030"
+            return [
+                {
+                    "title": query,
+                    "url": f"https://example.com/{slug}",
+                    "content": content,
+                    "raw_content": content,
+                }
+            ]
 
         def analyse(technology, hits):
             urls = [hit.url for hit in hits]
             return MarketAnalysis(
-                cagr_percent=20,
-                growth=CitedAssessment(judgment="성장", source_urls=[urls[0]]),
+                growth_metric=GrowthMetric(
+                    market_name="AI inference market",
+                    cagr_percent=20,
+                    period_start_year=2025,
+                    period_end_year=2030,
+                    citation=SourceCitation(
+                        source_url=urls[0],
+                        excerpt=hits[0].content,
+                    ),
+                ),
+                growth=CitedAssessment(judgment="성장"),
                 adoption_level="public_prototype_only",
-                adoption=CitedAssessment(judgment="프로토타입", source_urls=[urls[-2]]),
+                adoption=CitedAssessment(
+                    judgment="프로토타입",
+                    citations=[
+                        SourceCitation(
+                            source_url=urls[-2],
+                            excerpt=hits[-2].content,
+                        )
+                    ],
+                ),
                 supports=[],
-                ecosystem=CitedAssessment(judgment="외부 지원 미확인", source_urls=[urls[-1]]),
+                ecosystem=CitedAssessment(
+                    judgment="외부 지원 미확인",
+                    citations=[
+                        SourceCitation(
+                            source_url=urls[-1],
+                            excerpt=hits[-1].content,
+                        )
+                    ],
+                ),
             )
 
         update = build_market_node(search, analyse)(new_state())
@@ -43,7 +79,9 @@ class MarketNodeTest(unittest.TestCase):
 
 class MarketRuntimeConfigTest(unittest.TestCase):
     def test_reports_all_missing_runtime_settings_together(self):
-        with self.assertRaisesRegex(RuntimeError, "TAVILY_API_KEY, LLM_PROVIDER, LLM_MODEL"):
+        with self.assertRaisesRegex(
+            RuntimeError, "TAVILY_API_KEY, LLM_PROVIDER, LLM_MODEL"
+        ):
             validate_runtime_config({})
 
     def test_openai_requires_its_api_key(self):
