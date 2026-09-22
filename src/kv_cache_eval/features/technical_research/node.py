@@ -28,6 +28,7 @@ def make_runtime_llm():
 def research_technology(
     state: State, technology: Technology, *, settings=None,
     top_k: int = 5, max_attempts: int = 2, max_llm_calls: int = 24,
+    user_question: str | None = None,
 ) -> ResearchResult:
     """기술 이름과 문서 manifest만 바꿔 공통 LangGraph 조사를 실행한다."""
     from kv_cache_eval.features.technical_research.ingest import TECHNOLOGIES
@@ -51,7 +52,7 @@ def research_technology(
         return search_web(query, technology, count)
 
     reviewer = ModelReviewer(llm, max_calls=max_llm_calls, target=technology)
-    questions = questions_for_state(state, technology)
+    questions = questions_for_state(state, technology, user_question=user_question)
     key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
     result = research_questions(questions, rag_search, reviewer, target=technology,
                                 top_k=top_k, max_attempts=max_attempts,

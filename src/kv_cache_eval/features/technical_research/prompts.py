@@ -54,9 +54,11 @@ def category_for_gap(criterion: str, reason: str) -> str:
     return "problem"
 
 
-def questions_for_state(state: State, target: str) -> list[ResearchQuestion]:
+def questions_for_state(state: State, target: str, user_question: str | None = None) -> list[ResearchQuestion]:
     domain = state["domain_and_criteria"]["domain"]
-    questions = [ResearchQuestion(item.id, f"{item.text.format(target=target)} 적용 도메인: {domain}", item.route)
+    request = f" 사용자 요청(원문에서 검증할 내용): {user_question.strip()}" if user_question and user_question.strip() else ""
+    questions = [ResearchQuestion(item.id, f"{item.text.format(target=target)} 적용 도메인: {domain}"
+                                  + ("." + request if request else ""), item.route)
                  for item in QUESTION_TEMPLATES]
     gap_questions = []
     for index, gap in enumerate(state.get("evidence_gaps") or []):
@@ -66,7 +68,7 @@ def questions_for_state(state: State, target: str) -> list[ResearchQuestion]:
             paper = any(term in gap_text for term in ("논문", "실험", "성능", "원리", "자원"))
             route = "both" if public and paper else "web" if public else "rag"
             category = category_for_gap(gap["criterion"], gap["reason"])
-            gap_questions.append(ResearchQuestion(f"gap-{index}", gap_text, route, category))
+            gap_questions.append(ResearchQuestion(f"gap-{index}", gap_text + request, route, category))
     return gap_questions + questions if state["research_round"] > 0 else questions + gap_questions
 
 

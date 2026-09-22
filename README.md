@@ -1,12 +1,12 @@
-# KV Cache 최적화 기술 평가: 팀 협업 시작 구조
+# KV Cache 최적화 기술 조사와 평가
 
 GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(CPU Host Memory에 KV를 두고 필요한 데이터를 GPU로 가져오는 접근)을 적용할 때의 근거와 조건을 비교하는 LangGraph 구조입니다. 기술은 사람이 선정했습니다. 알고리즘 구현이나 GPU 벤치마크가 아니라 공개 자료에 기반한 기술 평가가 목적입니다. 단일 승자보다 관점별 차이, 상충 관계, 적용 조건을 보고합니다.
 
 ## 현재 상태
 
-- **구현됨:** 공유 State·자료형·초기값, 구조적 근거 공백 검사, 재조사 횟수 라우팅, 병렬 조사/평가 합류 그래프, 오프라인 smoke test, InfiniGen 전용 로컬 PDF RAG와 제한된 재검색 흐름.
-- **TODO:** KIVI 조사, 네 평가 노드, 내용 타당성 검사, 종합, 보고서 및 PDF 생성. KIVI와 평가 등 기본 기능 노드는 `NotImplementedError`로 중단됩니다. 테스트 대체 노드의 빈 데이터와 문구는 연구 결과가 아닙니다.
-- InfiniGen 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
+- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, KIVI TRL 평가, 두 기술의 시장성·도메인 적합성 평가, 공유 State와 근거 공백 검사, 병렬 조사·평가 Graph 배선.
+- **TODO:** InfiniGen TRL·이해관계자 평가, 종합, 최종 보고서·PDF. 따라서 전체 Graph를 기본 노드만으로 끝까지 실행할 수 없습니다. `main.py`는 두 기술의 **조사 근거만** 순서대로 저장합니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
+- 두 기술의 로컬 검색 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
 ## 설치와 실행
 
@@ -22,19 +22,24 @@ uv sync --locked --all-extras
 # 오프라인 단위 테스트 및 그래프 컴파일 확인
 HF_HUB_OFFLINE=1 uv run --locked python -m unittest discover -s tests -v
 uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
+
+# main.py 맨 위 QUESTION을 편집한 뒤 기술 조사 실행
+.venv/bin/python main.py
 ```
+
+`main.py`는 KIVI와 InfiniGen을 순서대로 조사하고 `data/cache/runs/`에 실행마다 고유한 JSON 파일을 만듭니다. JSON에는 질문, 진행 상태, 각 기술의 조사 근거를 담은 State가 있습니다. 첫 조사 뒤 파일을 갱신하므로 다음 기술이 실패해도 첫 결과는 남습니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이 명령은 TRL·시장성·이해관계자·도메인 평가나 최종 보고서를 실행하지 않습니다.
 
 `pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
 
 | 설치 범위 | 패키지와 용도 |
 | --- | --- |
 | 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용. `python-dotenv`: 명시적 `.env` 로딩 함수에 사용 |
-| `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: InfiniGen PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
-| `web` | `langchain-tavily`: 후속 웹 검색용 |
+| `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 두 기술 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
+| `web` | `langchain-tavily`: 웹 검색용 |
 | `report` | `reportlab`: 후속 PDF 생성용 |
-| `llm-openai` | InfiniGen 조사에서 `LLM_PROVIDER=openai`로 선택할 때 사용할 클라이언트. 모델의 기본값은 없음 |
+| `llm-openai` | 두 기술 조사와 구현된 평가에서 `LLM_PROVIDER=openai`로 선택할 때 사용할 클라이언트. 모델의 기본값은 없음 |
 
-전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 아직 구현되지 않은 KIVI 노드에서 기본 실행이 중단됩니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 미구현 이해관계자·종합·보고서 노드 때문에 기본 전체 실행은 완료되지 않습니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
 
 ### 환경변수와 필요한 키
 
@@ -45,15 +50,15 @@ cp .env.example .env
 
 | 변수 | 언제 필요한가 |
 | --- | --- |
-| `LLM_PROVIDER`, `LLM_MODEL` | InfiniGen 조사를 실제 실행할 때 사용. 현재 구현된 제공자는 `openai`이며 모델명은 사용자가 설정 |
+| `LLM_PROVIDER`, `LLM_MODEL` | 두 기술 조사 및 구현된 평가를 실제 실행할 때 사용. 현재 구현된 제공자는 `openai`이며 모델명은 사용자가 설정 |
 | `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 로컬 dense 임베딩이므로 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
 | `OPENAI_API_KEY` | OpenAI 생성 LLM을 실제 호출할 때만 필요 |
-| `TAVILY_API_KEY` | Tavily 웹 검색을 구현하고 호출할 때만 필요 |
+| `TAVILY_API_KEY` | 기술 조사·시장성 평가의 Tavily 웹 검색을 실제 호출할 때 필요 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | 추적은 기본 `false`. 사용하기로 선택한 경우에만 `true`와 키·프로젝트 설정 |
 
-`BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. InfiniGen RAG는 `HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 사용합니다. 모델의 sparse·multi-vector 기능은 사용하지 않습니다.
+`BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. 두 기술의 RAG는 `HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 사용합니다. 모델의 sparse·multi-vector 기능은 사용하지 않습니다.
 
-`.env`는 파일만 만든다고 자동 적용되지 않습니다. InfiniGen CLI와 노드는 클라이언트를 만들기 전에 `load_environment()`를 호출합니다. 별도 진입점을 만들 때도 다음처럼 호출합니다.
+`.env`는 파일만 만든다고 자동 적용되지 않습니다. 기술 조사 CLI와 노드는 클라이언트를 만들기 전에 `load_environment()`를 호출합니다. 별도 진입점을 만들 때도 다음처럼 호출합니다.
 
 ```python
 from kv_cache_eval.common.config import get_embedding_model, load_environment
@@ -62,7 +67,7 @@ load_environment()  # 현재 작업 디렉터리의 .env; 다른 위치라면 �
 embedding_model = get_embedding_model()
 ```
 
-`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `.env`는 Git에서 무시됩니다. `index`와 `evaluate`는 생성 LLM API를 호출하지 않으며 `research`와 InfiniGen 노드는 호출합니다.
+`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `.env`는 Git에서 무시됩니다. 기술 조사 CLI의 `index`와 검색 평가는 생성 LLM API를 호출하지 않으며 `research`와 `main.py`는 호출합니다.
 
 ## 그래프
 
@@ -70,15 +75,15 @@ embedding_model = get_embedding_model()
 
 ```mermaid
 flowchart TD
-    I[입력 확인] --> K[KIVI 조사 TODO]
-    I --> F[InfiniGen 조사 RAG]
+    I[입력 확인] --> K[KIVI 조사 RAG·웹]
+    I --> F[InfiniGen 조사 RAG·웹]
     K --> J{{두 조사 완료}}
     F --> J
-    J --> T[TRL TODO]
-    J --> M[시장성 TODO]
+    J --> T[KIVI TRL 평가]
+    J --> M[시장성 평가]
     J --> S[이해관계자 TODO]
-    J --> D[도메인 TODO]
-    T --> G{{네 평가 완료}}
+    J --> D[도메인 평가]
+    T --> G{{네 평가 합류}}
     M --> G
     S --> G
     D --> G
@@ -125,9 +130,10 @@ LANGSMITH_TRACING=false .venv/bin/python scripts/run_research.py evaluate --tech
 | State 키 | 생산자 | 주 소비자 |
 | --- | --- | --- |
 | `selected_technologies`, `domain_and_criteria`, `max_research_rounds` | `new_state`/입력 | 모든 조사·평가, 입력 확인·라우팅 |
-| `kivi_evidence` | KIVI 조사 | 네 평가, 근거 확인, 보고서 |
-| `infinigen_evidence` | InfiniGen 조사 | 네 평가, 근거 확인, 보고서 |
-| `maturity_eval` | TRL 평가 | 근거 확인, 종합 |
+| `kivi_evidence` | KIVI 조사 | TRL·도메인 평가, 근거 확인, 보고서 |
+| `infinigen_evidence` | InfiniGen 조사 | 도메인 평가, 근거 확인, 보고서 |
+| `market_evidence` | 시장성 조사 | 시장성 평가, 근거 확인, 보고서 |
+| `maturity_eval` | KIVI TRL 평가 | 근거 확인, 종합 |
 | `market_eval` | 시장성 평가 | 근거 확인, 종합 |
 | `stakeholder_eval` | 이해관계자 평가 | 근거 확인, 종합 |
 | `domain_eval` | 도메인 평가 | 근거 확인, 종합 |
