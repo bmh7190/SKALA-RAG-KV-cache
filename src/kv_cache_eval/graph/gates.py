@@ -14,11 +14,6 @@ def validate_input(state: State) -> StateUpdate:
     return {}
 
 
-def research_join(state: State) -> StateUpdate:
-    """두 조사 노드가 모두 끝나야 평가를 시작하는 동기화 지점."""
-    return {}
-
-
 def check_evidence(state: State) -> StateUpdate:
     """최소 구조 검사. 출처의 실제 신뢰성·주장 타당성 검토는 TODO."""
     gaps: list[EvidenceGap] = []
@@ -39,6 +34,21 @@ def check_evidence(state: State) -> StateUpdate:
                     or not evidence["claim"].strip()
                     or not (source["document"].strip() or source["url"])):
                 gaps.append({"technology": technology, "criterion": "기술 조사", "reason": f"근거 {evidence['id']}의 기술/출처 확인 필요"})
+            else:
+                known_ids[technology].add(evidence["id"])
+
+    market_result = state["market_evidence"]
+    if market_result is not None:
+        for evidence in market_result["evidence"]:
+            technology = evidence["technology"]
+            source = evidence["source"]
+            if evidence["id"] in all_ids:
+                gaps.append({"technology": technology, "criterion": "시장성", "reason": f"중복 근거 ID: {evidence['id']}"})
+            all_ids.add(evidence["id"])
+            if (evidence["verification_status"] != "source_checked"
+                    or not evidence["claim"].strip()
+                    or not (source["document"].strip() or source["url"])):
+                gaps.append({"technology": technology, "criterion": "시장성", "reason": f"근거 {evidence['id']}의 출처 확인 필요"})
             else:
                 known_ids[technology].add(evidence["id"])
 
