@@ -1,8 +1,6 @@
 """하드코딩한 질문으로 기존 전체 평가 Graph를 실행한다."""
 
-from kv_cache_eval.common.state import new_state
-from kv_cache_eval.features.technical_research.node import research_technology
-from kv_cache_eval.graph import build_graph
+from kv_cache_eval.graph import run
 
 
 QUESTION = (
@@ -14,15 +12,7 @@ QUESTION = (
 
 
 def main():
-    graph = build_graph({
-        "research_kivi": lambda state: {
-            "kivi_evidence": research_technology(state, "KIVI", user_question=QUESTION)
-        },
-        "research_infinigen": lambda state: {
-            "infinigen_evidence": research_technology(state, "InfiniGen", user_question=QUESTION)
-        },
-    })
-    return graph.invoke(new_state())
+    return run(QUESTION)
 
 
 if __name__ == "__main__":

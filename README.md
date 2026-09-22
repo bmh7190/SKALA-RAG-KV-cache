@@ -4,7 +4,7 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 ## 현재 상태
 
-- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, KIVI TRL 평가, 두 기술의 시장성·도메인 적합성 평가, 공유 State와 근거 공백 검사, 병렬 조사·평가 Graph 배선.
+- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, KIVI TRL 평가, 두 기술의 시장성·도메인 적합성 평가, 공유 State와 근거 공백 검사, 단일 조사·병렬 평가 Graph 배선.
 - **TODO:** InfiniGen TRL·이해관계자 평가, 종합, 최종 보고서·PDF. `main.py`는 기존 전체 Graph를 실행하지만 미구현 노드에서는 중단될 수 있습니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
 - 두 기술의 로컬 검색 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
@@ -27,7 +27,7 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 .venv/bin/python main.py
 ```
 
-`main.py`는 하드코딩한 질문을 두 기술 조사 노드에 전달한 뒤 기존 전체 Graph를 호출하는 진입점입니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이해관계자·종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
+`main.py`는 하드코딩한 질문으로 `graph.run(QUESTION)`을 호출합니다. Graph의 단일 기술 조사 노드가 같은 엔진으로 KIVI와 InfiniGen을 조사한 뒤 네 평가 노드로 연결합니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이해관계자·종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
 
 `pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
 
@@ -75,22 +75,18 @@ embedding_model = get_embedding_model()
 
 ```mermaid
 flowchart TD
-    I[입력 확인] --> K[KIVI 조사 RAG·웹]
-    I --> F[InfiniGen 조사 RAG·웹]
-    K --> J{{두 조사 완료}}
-    F --> J
-    J --> T[KIVI TRL 평가]
-    J --> M[시장성 평가]
-    J --> S[이해관계자 TODO]
-    J --> D[도메인 평가]
+    I[입력 확인] --> R[공통 기술 조사 노드<br/>KIVI·InfiniGen RAG·웹]
+    R --> T[KIVI TRL 평가]
+    R --> M[시장성 평가]
+    R --> S[이해관계자 TODO]
+    R --> D[도메인 평가]
     T --> G{{네 평가 합류}}
     M --> G
     S --> G
     D --> G
     G --> C[근거 구조 검사]
-    C -->|공백 있고 횟수 남음| R[재조사 횟수 증가]
-    R --> K
-    R --> F
+    C -->|공백 있고 횟수 남음| N[재조사 횟수 증가]
+    N --> R
     C -->|공백 없음 또는 횟수 소진| Y[종합 TODO]
     Y --> P[보고서 TODO]
     P --> E[종료]
@@ -100,7 +96,7 @@ flowchart TD
 
 ## KIVI·InfiniGen 공통 기술 조사
 
-두 기술은 `research_technology(state, technology)`의 같은 질문·검색·검토·추출·제한된 재검색 흐름을 사용합니다. `research_kivi`와 `research_infinigen`은 각각 해당 State 키만 반환합니다. 상세 설계와 인용 규칙은 [`technical_research/README.md`](src/kv_cache_eval/features/technical_research/README.md)를 참조하세요.
+단일 `technical_research` Graph 노드가 선정된 KIVI와 InfiniGen을 순회하며 각각 `research_technology(state, technology)`를 호출합니다. 두 기술은 같은 질문·검색·검토·추출·제한된 재검색 흐름을 쓰고 결과는 기존 `kivi_evidence`·`infinigen_evidence` 키에 반환합니다. 상세 설계와 인용 규칙은 [`technical_research/README.md`](src/kv_cache_eval/features/technical_research/README.md)를 참조하세요.
 
 `technical_research/sources/`의 기술별 manifest가 PDF 버전·SHA256·물리 페이지·역할을 정의합니다. 현재 원문은 `data/documents/`에 5개 PDF로 저장되어 있으며, KIVI 49쪽과 InfiniGen 91쪽, 총 140쪽입니다. 색인 전 실제 파일의 해시와 페이지 예산을 확인합니다. 기술별 BGE-M3/FAISS 색인은 `data/indexes/kivi/`와 `data/indexes/infinigen/`에 분리됩니다.
 

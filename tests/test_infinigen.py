@@ -140,7 +140,7 @@ class InfiniGenTest(unittest.TestCase):
         self.assertTrue(any("q1: first" in note for note in result["notes"]))
         self.assertTrue(any("q2: second" in note for note in result["notes"]))
 
-    def test_partial_state_update(self):
+    def test_single_technology_result(self):
         from kv_cache_eval.common.state import new_state
         from kv_cache_eval.features.technical_research import node
 
@@ -149,9 +149,8 @@ class InfiniGenTest(unittest.TestCase):
              patch("kv_cache_eval.features.technical_research.workflow.ModelReviewer") as reviewer, \
              patch("kv_cache_eval.features.technical_research.workflow.research_questions", return_value=result):
             reviewer.return_value.calls = 0
-            output = node.research_infinigen(new_state())
-        self.assertEqual(set(output), {"infinigen_evidence"})
-        self.assertEqual(output["infinigen_evidence"]["evidence"], [])
+            output = node.research_technology(new_state(), "InfiniGen")
+        self.assertEqual(output["evidence"], [])
 
     def test_fingerprint_includes_citation_metadata_and_checksum(self):
         from kv_cache_eval.features.technical_research.ingest import Source, file_sha256

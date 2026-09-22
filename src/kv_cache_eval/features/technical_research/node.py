@@ -64,9 +64,10 @@ def research_technology(
     return result
 
 
-def research_kivi(state: State) -> StateUpdate:
-    return {"kivi_evidence": research_technology(state, "KIVI")}
-
-
-def research_infinigen(state: State) -> StateUpdate:
-    return {"infinigen_evidence": research_technology(state, "InfiniGen")}
+def research(state: State, *, user_question: str | None = None) -> StateUpdate:
+    """한 Graph 노드에서 선정 기술 모두를 같은 조사 엔진으로 처리한다."""
+    updates: StateUpdate = {}
+    for technology in state["selected_technologies"]:
+        key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
+        updates[key] = research_technology(state, technology, user_question=user_question)
+    return updates

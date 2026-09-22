@@ -31,18 +31,30 @@ class SharedResearchTest(unittest.TestCase):
         self.assertEqual(counts, {"KIVI": 49, "InfiniGen": 91})
         self.assertEqual(sum(counts.values()), 140)
 
-    def test_wrappers_call_same_function_and_return_separate_keys(self):
+    def test_common_node_uses_same_engine_and_returns_both_keys(self):
         state = new_state()
-        def fake_research(_, technology, **kwargs):
+        def fake_research(current, technology, **kwargs):
+            self.assertIs(current, state)
+            self.assertEqual(kwargs["user_question"], "공통 질문")
             return {"evidence": [], "notes": [technology]}
         with patch.object(node, "research_technology", side_effect=fake_research) as shared:
-            kivi = node.research_kivi(state)
-            infinigen = node.research_infinigen(state)
-        self.assertEqual(set(kivi), {"kivi_evidence"})
-        self.assertEqual(set(infinigen), {"infinigen_evidence"})
-        self.assertEqual(kivi["kivi_evidence"]["notes"], ["KIVI"])
-        self.assertEqual(infinigen["infinigen_evidence"]["notes"], ["InfiniGen"])
+            output = node.research(state, user_question="공통 질문")
+        self.assertEqual(set(output), {"kivi_evidence", "infinigen_evidence"})
+        self.assertEqual(output["kivi_evidence"]["notes"], ["KIVI"])
+        self.assertEqual(output["infinigen_evidence"]["notes"], ["InfiniGen"])
         self.assertEqual([call.args[1] for call in shared.call_args_list], ["KIVI", "InfiniGen"])
+
+    def test_research_engine_receives_prior_evidence_on_retry(self):
+        state = new_state()
+        prior = {"evidence": [], "notes": ["earlier round"]}
+        state["kivi_evidence"] = prior
+        state["research_round"] = 1
+        with patch.object(node, "make_runtime_llm", return_value=object()), \
+             patch("kv_cache_eval.features.technical_research.workflow.research_questions",
+                   return_value={"evidence": [], "notes": []}) as workflow:
+            node.research_technology(state, "KIVI", user_question="같은 질문")
+        self.assertIs(workflow.call_args.kwargs["prior"], prior)
+        self.assertTrue(all("같은 질문" in item.text for item in workflow.call_args.args[0]))
 
     def test_both_targets_get_same_general_questions(self):
         state = new_state()

@@ -1,6 +1,6 @@
 # KIVI·InfiniGen 공통 기술 조사
 
-`node.py`의 `research_technology(state, technology)`가 동일한 질문, RAG/Tavily 검색, 본문 검토, 구조화 추출, 제한된 재검색을 실행합니다. `research_kivi`와 `research_infinigen`은 각각 `kivi_evidence`와 `infinigen_evidence`만 State에 반환합니다.
+Graph의 단일 `technical_research` 노드는 `node.py`의 `research(state, user_question=...)`에 연결됩니다. 이 함수가 선정된 두 기술에 같은 `research_technology(state, technology)`를 적용하고 `kivi_evidence`와 `infinigen_evidence`를 함께 반환합니다. 질문, RAG/Tavily 검색, 본문 검토, 구조화 추출, 제한된 재검색 흐름은 공통입니다.
 
 ## 원문과 인덱스
 
@@ -12,7 +12,7 @@
 
 `prompts.py`의 공통 질문 10개는 문제, 원리, 구현, 실험 조건, 성능, 품질, 한계, 독립 평가, 현재 공개 상태, 논문과 공개 구현 연결을 다룹니다. 앞의 논문 질문은 RAG, 공개 상태는 웹, 연결은 둘 다 검색합니다. 이전 평가의 근거 공백은 원래 기준에 맞는 범주로 다시 질문합니다. 경로와 문서 제목은 검색 단서이며 본문 사실의 증거가 아닙니다.
 
-`main.py`는 전체 Graph의 두 조사 노드에 하드코딩 `QUESTION`을 전달합니다. `research_technology(..., user_question=QUESTION)`에서 이 요청이 각 기술의 공통 세부 질문에 붙어 검색과 LLM 검토에 전달됩니다. 사용자 질문의 기술 분류나 주장은 검증할 맥락일 뿐 근거로 취급하지 않습니다. 기본 호출은 기존 10개 질문과 경로를 그대로 사용합니다.
+`main.py`는 `graph.run(QUESTION)`만 호출합니다. 이 요청은 단일 Graph 조사 노드에서 `research_technology(..., user_question=QUESTION)`로 전달되고, 각 기술의 공통 세부 질문에 붙어 검색과 LLM 검토에 사용됩니다. 사용자 질문의 기술 분류나 주장은 검증할 맥락일 뿐 근거로 취급하지 않습니다. 기본 호출은 기존 10개 질문과 경로를 그대로 사용합니다.
 
 웹 경로는 `TavilySearch` 한 번으로 URL과 `raw_content`를 받아 문서 후보를 만듭니다. 검색 요약 `content`는 근거로 사용하지 않으며, 본문이 없는 결과는 미확인으로 남깁니다.
 

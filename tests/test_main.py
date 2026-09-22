@@ -1,4 +1,4 @@
-"""전체 Graph 진입점의 질문 연결을 외부 API 없이 확인한다."""
+"""하나의 Graph 실행 진입점과 질문 전달을 외부 API 없이 확인한다."""
 
 import os
 import subprocess
@@ -11,6 +11,7 @@ import main as app
 
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.technical_research.node import research_technology
+from kv_cache_eval.graph import workflow as graph_workflow
 
 
 class MainTest(unittest.TestCase):
@@ -25,26 +26,20 @@ class MainTest(unittest.TestCase):
             ], cwd=directory, env=environment, check=True, capture_output=True)
         self.assertEqual(completed.stdout, b"")
 
-    def test_question_reaches_both_graph_research_nodes(self):
+    def test_main_delegates_question_to_common_run(self):
+        final = {"report": "graph result"}
+        with patch.object(app, "run", return_value=final) as execute:
+            self.assertIs(app.main(), final)
+        execute.assert_called_once_with(app.QUESTION)
+
+    def test_run_builds_and_invokes_full_graph(self):
         graph = Mock()
         final = {"report": "graph result"}
         graph.invoke.return_value = final
-
-        def research(state, technology, *, user_question):
-            self.assertEqual(user_question, app.QUESTION)
-            return {"evidence": [{"id": technology.lower()}], "notes": []}
-
-        with patch.object(app, "build_graph", return_value=graph) as build, \
-             patch.object(app, "research_technology", side_effect=research) as investigate:
-            self.assertIs(app.main(), final)
-            overrides = build.call_args.args[0]
-            self.assertEqual(set(overrides), {"research_kivi", "research_infinigen"})
-            state = graph.invoke.call_args.args[0]
-            self.assertEqual(state["selected_technologies"], ("KIVI", "InfiniGen"))
-            self.assertEqual(overrides["research_kivi"](state)["kivi_evidence"]["evidence"][0]["id"], "kivi")
-            self.assertEqual(overrides["research_infinigen"](state)["infinigen_evidence"]["evidence"][0]["id"], "infinigen")
-        self.assertEqual(investigate.call_count, 2)
-        graph.invoke.assert_called_once_with(state)
+        with patch.object(graph_workflow, "build_graph", return_value=graph) as build:
+            self.assertIs(graph_workflow.run("공통 질문"), final)
+        build.assert_called_once_with(user_question="공통 질문")
+        graph.invoke.assert_called_once_with(new_state())
 
     def test_question_reaches_research_workflow(self):
         with patch("kv_cache_eval.features.technical_research.node.make_runtime_llm", return_value=object()), \
@@ -57,9 +52,7 @@ class MainTest(unittest.TestCase):
         self.assertIn("KIVI 조사", result["notes"][-1])
 
     def test_unimplemented_graph_error_is_not_hidden(self):
-        graph = Mock()
-        graph.invoke.side_effect = NotImplementedError("보고서 미구현")
-        with patch.object(app, "build_graph", return_value=graph):
+        with patch.object(app, "run", side_effect=NotImplementedError("보고서 미구현")):
             with self.assertRaises(NotImplementedError):
                 app.main()
 
