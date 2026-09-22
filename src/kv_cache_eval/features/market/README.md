@@ -14,6 +14,12 @@ KIVI와 InfiniGen의 시장 규모·성장성, 상용화·채택 현황, 생태�
 
 현재 실제 실행은 OpenAI 생성 모델과 Tavily 검색을 지원합니다. 저장소 루트의 `.env`에 다음 값을 설정합니다. 실제 키는 Git에 커밋하지 않습니다.
 
+시장성 실행에 필요한 선택 의존성을 설치합니다.
+
+```bash
+uv sync --locked --all-extras
+```
+
 ```dotenv
 LLM_PROVIDER=openai
 LLM_MODEL=<팀에서 선택한 모델명>
@@ -33,4 +39,4 @@ uv run --locked python -m kv_cache_eval.features.market.cli --check-config
 uv run --locked python -m kv_cache_eval.features.market.cli
 ```
 
-결과 JSON은 `market_evidence`와 `market_eval`을 포함합니다. 검색 요약문만 확보된 자료는 `unverified`로 유지하고, 원문까지 확보된 자료만 `source_checked`로 처리합니다. 검색 결과에 없는 URL을 구조화 판단이 인용하면 실행을 중단합니다.
+결과 JSON은 `market_evidence`와 `market_eval`을 포함합니다. 검색 요약문만 확보된 자료는 `unverified`로 유지하고, 원문까지 확보된 자료만 `source_checked`로 처리합니다. 검색 결과에 없는 URL, 원문에서 확인되지 않는 인용문, 인용문과 일치하지 않는 CAGR·전망 기간은 실행 단계에서 거부합니다. 저자 논문과 저자 저장소는 외부 생태계 지원 점수에서 제외합니다.
