@@ -15,7 +15,7 @@ from kv_cache_eval.features.domain.runtime import DomainConfigurationError, invo
 
 TECHNOLOGIES = ("KIVI", "InfiniGen")
 # 양쪽 요청(초안/검토)의 UTF-8 바이트 수를 각각 제한한다. 모델 한도에 맞게 조절 가능하다.
-DEFAULT_MAX_INPUT_BYTES = 24000
+DEFAULT_MAX_INPUT_BYTES = 32000
 MAX_REVIEW_DRAFT_BYTES = 4000
 ALIASES = {"GPU 메모리": "GPU 메모리 사용량", "지연시간": "추론 지연시간", "운영 난이도": "적용·운영 난이도"}
 
