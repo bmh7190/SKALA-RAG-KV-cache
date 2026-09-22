@@ -24,13 +24,13 @@ TAVILY_API_KEY=<로컬 키>
 API를 호출하지 않고 설정만 확인합니다.
 
 ```bash
-uv run --locked kv-market-eval --check-config
+uv run --locked python -m kv_cache_eval.features.market.cli --check-config
 ```
 
 설정 확인 후 시장성 조사·평가를 실행합니다.
 
 ```bash
-uv run --locked kv-market-eval
+uv run --locked python -m kv_cache_eval.features.market.cli
 ```
 
 결과 JSON은 `market_evidence`와 `market_eval`을 포함합니다. 검색 요약문만 확보된 자료는 `unverified`로 유지하고, 원문까지 확보된 자료만 `source_checked`로 처리합니다. 검색 결과에 없는 URL을 구조화 판단이 인용하면 실행을 중단합니다.
