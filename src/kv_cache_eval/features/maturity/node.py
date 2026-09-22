@@ -1,81 +1,131 @@
-"""확인된 KIVI 근거로 공개 자료 기반 TRL을 추정한다."""
+"""기술별 확인 근거가 보여 주는 검증 수준으로 공개 TRL을 추정한다."""
 
-from kv_cache_eval.common.schemas import Evidence, Evaluation
+import re
+
+from kv_cache_eval.common.schemas import Evidence, Evaluation, ResearchResult, Technology
 from kv_cache_eval.common.state import State, StateUpdate
 
 
-def evaluate(state: State) -> StateUpdate:
-    """KIVI만 평가하고 미확인 상위 단계는 미달로 단정하지 않는다."""
-    research = state["kivi_evidence"]
+def _evaluate_one_technology(
+    technology: Technology, research: ResearchResult | None,
+) -> tuple[Evaluation, list[str]]:
+    """기술명과 무관하게 동일한 TRL 1~9 기준을 적용한다."""
+    independent_ids = set()
+    if research is not None:
+        independent_ids = {
+            note.split(": source_role=", 1)[0]
+            for note in research["notes"] if ": source_role=independent_validation" in note
+        }
     verified = [] if research is None else [
         item for item in research["evidence"]
-        if item["technology"] == "KIVI"
+        if item["technology"] == technology
         and item["verification_status"] == "source_checked"
         and item["claim"].strip()
-        and item["source"]["page"] is not None
+        and (item["source"]["document"].strip() or item["source"]["url"])
     ]
-    primary = [item for item in verified if item["source"]["document"] == "kivi_original.pdf"]
-    independent = [item for item in verified if item["source"]["document"] == "kvquant_validation.pdf"]
 
-    def find(items: list[Evidence], category: str, *terms: str) -> Evidence | None:
+    def category(item: Evidence) -> str:
+        parts = item["id"].split(":")
+        return parts[-2].lower() if len(parts) >= 2 else ""
+
+    direct = [
+        item for item in verified
+        if item["id"] not in independent_ids and category(item) != "independent_evaluation"
+    ]
+
+    def first(
+        categories: set[str], terms: tuple[str, ...] = (), *,
+        source: str | None = None, exclude_id: str | None = None,
+    ) -> Evidence | None:
         return next((
-            item for item in items
-            if f":{category}:" in item["id"]
-            and all(term in item["claim"].lower() for term in terms)
+            item for item in direct
+            if category(item) in categories
+            and (source is None or (item["source"]["document"] or item["source"]["url"]) == source)
+            and item["id"] != exclude_id
+            and (not terms or any(term in item["claim"].lower() for term in terms))
         ), None)
 
-    concept = find(primary, "principle", "per-channel", "per-token")
-    mechanism = find(primary, "mechanism", "full precision")
-    experiment = find(primary, "model_quality", "gsm8k")
-    gpu = find(primary, "experiment_conditions", "a100", "gpu")
-    throughput = find(primary, "performance_results", "throughput")
-    workload = find(primary, "experiment_conditions", "sharegpt")
-    validation = find(independent, "independent_evaluation", "kivi", "ruler")
-    code = next((item for item in primary if "source code is available" in item["claim"].lower()
-                 or "github.com" in item["claim"].lower()
-                 or "github.com" in (item["source"]["url"] or "").lower()), None)
+    concept = first({"principle", "concept"})
+    method = first({"mechanism", "implementation"})
+    experiment = first({"experiment", "model_quality", "performance_results", "component_validation"})
+    model = next((item for item in direct if category(item) == "experiment_conditions"
+                  and item["experiment"] and item["experiment"].get("model")), None)
+    source = (model["source"]["document"] or model["source"]["url"]) if model else None
+    workload = next((item for item in direct if category(item) == "experiment_conditions"
+                     and item["experiment"] and item["experiment"].get("workload")
+                     and source is not None
+                     and (item["source"]["document"] or item["source"]["url"]) == source
+                     and re.search(r"\b(real|realistic|representative|production-like|service|serving)\b",
+                                   item["claim"], re.IGNORECASE)), None)
+    implementation = first(
+        {"implementation", "mechanism", "performance_results"},
+        ("implement", "prototype", "system"), source=source,
+    ) if source else None
+    system_result = first(
+        {"performance_results", "system_evaluation"},
+        ("end-to-end", "wall-clock", "batch size", "peak memory", "latency", "system-level"),
+        source=source, exclude_id=implementation["id"] if implementation else None,
+    ) if source else None
+    independent = next((item for item in verified if item["id"] in independent_ids
+                        or category(item) == "independent_evaluation"), None)
+    public_code = first({"implementation", "code", "publication"}, ("source code", "repository", "github"))
 
     score: float | None = None
-    supporting = [item for item in (concept, mechanism, experiment, gpu, throughput, validation) if item]
-    if concept and mechanism and gpu and throughput and gpu["experiment"] and gpu["experiment"].get("model"):
-        score = 6.0  # 관련 GPU 환경에서 KIVI 시스템의 처리량까지 평가됨
-    elif concept and mechanism and gpu:
-        score = 5.0
-    elif concept and mechanism and experiment:
-        score = 4.0
-    elif concept and experiment:
-        score = 3.0
-    elif concept and mechanism:
-        score = 2.0
-    elif concept:
-        score = 2.0
+    supporting = [item for item in (concept, method, experiment) if item]
+    if concept:
+        score = 1.0
+        if method:
+            score = 2.0
+        if experiment:
+            score = 3.0
+        if method and experiment:
+            score = 4.0
+            if model and workload:
+                score = 5.0
+                supporting.extend((model, workload))
+                if implementation and system_result:
+                    score = 6.0
+                    supporting.extend((implementation, system_result))
 
-    if score == 6.0 and workload:
-        supporting.append(workload)
+    operational = (
+        (7, {"pilot", "operational_prototype"}, ("demonstrat", "시연", "실증")),
+        (8, {"operational_validation"}, ("validat", "검증 완료")),
+        (9, {"service_deployment", "production_deployment"}, ("deployed", "operat", "운용", "적용")),
+    )
+    if score is not None and score >= 6:
+        for level, categories, terms in operational:
+            item = first(categories, terms)
+            if item and not re.search(r"\b(?:not|no|without)\b|미확인|않", item["claim"], re.IGNORECASE):
+                score = float(level)
+                supporting.append(item)
+
+    if independent and score is not None:
+        supporting.append(independent)  # 독립 검증은 점수를 올리는 조건이 아니다.
     evidence_ids = list(dict.fromkeys(item["id"] for item in supporting)) if score is not None else []
     rationale = None
     if score is not None:
-        observations = ["원논문에서 KIVI의 기술 개념을 확인했다."]
-        if mechanism:
-            observations.append("핵심 메커니즘의 구현 설명을 확인했다.")
+        observations = ["기술 원리 또는 개념을 확인했다."]
+        if method:
+            observations.append("적용 방법 또는 핵심 구성 요소를 확인했다.")
         if experiment:
-            observations.append("모델 품질 실험을 확인했다.")
-        if score == 6.0:
-            observations.append("원논문의 GPU용 KIVI 구현, ShareGPT 기반으로 합성한 실제 LLM 추론 workload, end-to-end 메모리·처리량 평가를 종합해 실제 LLM serving과 유사한 환경의 시스템 시연으로 판단했다. 이는 실제 서비스 운영 근거가 아니다.")
-        if validation:
-            observations.append("KVQuant의 KIVI 비교는 독립 재평가 근거로만 사용했다.")
-        rationale = (
-            f"공개 자료 기반 TRL {int(score)} 추정이다. "
-            + " ".join(observations)
-            + f" 사용한 Evidence ID: {', '.join(evidence_ids)}."
-        )
-    uncertainty = (
-        "KIVI 원논문 1쪽은 source code repository 제공을 명시하지만, 저장소 자체의 현재 상태·재현성·유지 여부는 별도 검증하지 않아 미확인이다. "
-        "기업 Pilot/PoC, 실제 운용 환경의 시제품, 운영 검증 및 실제 서비스 적용에 관한 공개 근거도 확인되지 않아 TRL 7~9 도달 여부는 미확인이다. "
-        "미확인은 해당 단계 미달을 뜻하지 않는다."
-    )
+            observations.append("실험적 검증 결과를 확인했다.")
+        if model and workload and score >= 5:
+            observations.append("모델과 실제와 유사한 workload의 실험 조건을 확인했다.")
+        if implementation and system_result and score >= 6:
+            observations.append("구현 및 시스템 수준 결과를 함께 확인해 관련 환경의 시스템 시연으로 판단했다.")
+        if independent:
+            observations.append("독립 후속 검증은 보조 근거로만 사용했다.")
+        if score >= 7:
+            observations.append("해당 운영 단계의 명시적 공개 근거를 확인했다.")
+        rationale = f"공개 자료 기반 TRL {int(score)} 추정이다. " + " ".join(observations)
+        rationale += f" 사용한 Evidence ID: {', '.join(evidence_ids)}."
+
+    unknown_from = int(score) + 1 if score is not None else 1
+    uncertainty = "공개 코드 또는 독립 검증만으로 운영·서비스 적용을 판단하지 않는다. "
+    if unknown_from <= 9:
+        uncertainty += f"공개 Evidence에서 TRL {unknown_from}~9 도달 여부는 미확인이다. 미확인은 단계 미달을 뜻하지 않는다."
     evaluation: Evaluation = {
-        "technology": "KIVI",
+        "technology": technology,
         "criterion": "기술 성숙도(TRL)",
         "judgment": f"TRL {int(score)} (공개 자료 기반 추정)" if score is not None else "공개 자료로 판단 불가",
         "score": score,
@@ -85,15 +135,26 @@ def evaluate(state: State) -> StateUpdate:
         "basis_status": "public_estimate" if score is not None else "unverified",
     }
     notes = [
-        f"A 기술 개념: {'확인' if concept else '미확인'}",
-        f"B 원논문 실험: {'확인' if experiment else '미확인'}",
-        f"C GPU 시스템 평가: {'확인' if gpu and throughput else '미확인'}",
-        f"D 공개 코드: 저자 공개 코드 제공 명시는 {'Evidence에서' if code else '원논문 1쪽에서'} 확인; repository 현재 상태·재현성·유지 여부는 미확인",
-        f"E 독립 후속 검증: {'확인' if validation else '미확인'} (실제 운영 근거와 별개)",
-        f"F 관련 LLM 추론 workload: {'ShareGPT 기반 조건 확인' if workload else 'ShareGPT 기반 조건 미확인'} (실제 서비스 운영과 별개)",
-        "G 기업 Pilot/PoC: 미확인 (단계 미달 판정 아님)",
-        "H 제품·서비스 적용: 미확인 (단계 미달 판정 아님)",
-        f"TRL 1~{int(score)}: 공개 근거로 뒷받침되는 수준" if score is not None else "TRL 1~6: 확인 근거 부족",
-        "TRL 7~9의 실제 운용 시제품·운영 검증·서비스 운용 여부는 현재 공개 근거로 미확인",
+        f"{technology}: 기술 개념 {'확인' if concept else '미확인'}, 구성 요소 {'확인' if method else '미확인'}, 실험 {'확인' if experiment else '미확인'}",
+        f"{technology}: 관련 환경 {'확인' if model and workload else '미확인'}, 시스템 시연 {'확인' if implementation and system_result and score is not None and score >= 6 else '미확인'}",
+        f"{technology}: 공개 코드 {'언급 확인' if public_code else '근거 미확인'}, 독립 검증 {'확인' if independent else '미확인'} (둘 다 운영 단계 근거로 승격하지 않음)",
+        f"{technology}: TRL {unknown_from}~9 도달 여부 미확인 (단계 미달 판정 아님)" if unknown_from <= 9 else f"{technology}: TRL 9 공개 근거 확인",
     ]
-    return {"maturity_eval": {"evaluations": [evaluation], "notes": notes}}
+    return evaluation, notes
+
+
+def evaluate(state: State) -> StateUpdate:
+    """현재 State의 기술별 조사 결과를 공통 TRL 평가로 연결한다."""
+    research_by_technology = {
+        "KIVI": state["kivi_evidence"],
+        "InfiniGen": state["infinigen_evidence"],
+    }
+    evaluations: list[Evaluation] = []
+    notes: list[str] = []
+    for technology in state["selected_technologies"]:
+        evaluation, technology_notes = _evaluate_one_technology(
+            technology, research_by_technology[technology],
+        )
+        evaluations.append(evaluation)
+        notes.extend(technology_notes)
+    return {"maturity_eval": {"evaluations": evaluations, "notes": notes}}
