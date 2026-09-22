@@ -130,11 +130,21 @@ class MarketAnalysisTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "인용문을 확인할 수 없습니다"):
             materialize_analysis("KIVI", self.hits, analysis)
 
-    def test_rejects_cagr_not_present_in_cited_excerpt(self):
+    def test_rejects_cagr_not_present_in_source(self):
         analysis = self.analysis()
         analysis.growth_metric.cagr_percent = 70.9
-        with self.assertRaisesRegex(ValueError, "CAGR 값을 확인할 수 없습니다"):
+        with self.assertRaisesRegex(
+            ValueError, "원문에서 CAGR 값을 확인할 수 없습니다"
+        ):
             materialize_analysis("KIVI", self.hits, analysis)
+
+    def test_metric_values_may_be_outside_short_excerpt_when_present_in_source(self):
+        analysis = self.analysis()
+        analysis.growth_metric.citation.excerpt = "CAGR of 31%"
+
+        _, result = materialize_analysis("KIVI", self.hits, analysis)
+
+        self.assertEqual(result["evaluations"][0]["score"], 5)
 
     def test_unverified_snippet_stays_unverified(self):
         unchecked = [self.hits[0]._replace(source_checked=False), *self.hits[1:]]

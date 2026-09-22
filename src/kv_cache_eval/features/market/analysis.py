@@ -139,7 +139,10 @@ def _is_external_support(technology: Technology, finding: SupportFinding) -> boo
     )
 
 
-def _market_metric(metric: GrowthMetric | None) -> MarketMetric | None:
+def _market_metric(
+    metric: GrowthMetric | None,
+    hits_by_url: dict[str, SearchHit],
+) -> MarketMetric | None:
     if metric is None:
         return None
     market_name = metric.market_name.strip()
@@ -147,23 +150,30 @@ def _market_metric(metric: GrowthMetric | None) -> MarketMetric | None:
         raise ValueError("CAGR을 적용한 시장 이름이 필요합니다")
     if metric.period_end_year <= metric.period_start_year:
         raise ValueError("CAGR 전망 종료 연도는 시작 연도보다 뒤여야 합니다")
-    excerpt = metric.citation.excerpt
+    source_url = canonical_url(metric.citation.source_url)
+    source_content = hits_by_url[source_url].content
     numeric_values = {
         "CAGR": f"{metric.cagr_percent:g}",
         "전망 시작 연도": str(metric.period_start_year),
         "전망 종료 연도": str(metric.period_end_year),
     }
     for label, value in numeric_values.items():
-        if re.search(rf"(?<![\d.]){re.escape(value)}(?![\d.])", excerpt) is None:
+        if (
+            re.search(
+                rf"(?<![\d.]){re.escape(value)}(?!\d)",
+                source_content,
+            )
+            is None
+        ):
             raise ValueError(
-                f"시장 지표 인용문에서 {label} 값을 확인할 수 없습니다: {value}"
+                f"시장 지표 원문에서 {label} 값을 확인할 수 없습니다: {value}"
             )
     result: MarketMetric = {
         "market_name": market_name,
         "cagr_percent": metric.cagr_percent,
         "period_start_year": metric.period_start_year,
         "period_end_year": metric.period_end_year,
-        "source_url": canonical_url(metric.citation.source_url),
+        "source_url": source_url,
     }
     for key in (
         "base_market_size",
@@ -262,7 +272,7 @@ def materialize_analysis(
             }
         )
 
-    metric = _market_metric(analysis.growth_metric)
+    metric = _market_metric(analysis.growth_metric, hits_by_url)
     growth_score = (
         None if metric is None else score_market_growth(metric["cagr_percent"])
     )
