@@ -7,103 +7,12 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 from kv_cache_eval.common.config import load_environment
+from kv_cache_eval.common.schemas import EvidenceGap, Synthesis
 from kv_cache_eval.common.state import State, StateUpdate
 
 
-SYSTEM_PROMPT = """
-당신은 KV Cache 최적화 기술을 평가하는 중립적인 종합 분석가다.
-
-입력으로 KIVI와 InfiniGen에 대한 다음 평가 결과가 제공된다.
-
-- 기술 성숙도
-- 시장성
-- 이해관계자
-- 도메인 적용성
-- 근거가 없거나 확인되지 않은 주장
-
-다음 원칙을 반드시 준수하라.
-
-1. KIVI와 InfiniGen의 우열을 판정하거나 하나의 기술을 추천하지 않는다.
-2. 입력으로 제공된 평가 결과와 근거만 사용한다.
-3. 서로 다른 모델, 하드웨어, 데이터셋, 문맥 길이, 배치 크기에서
-   측정된 성능 수치를 동일 조건의 결과처럼 직접 비교하지 않는다.
-4. 직접 확인된 사실과 기술 자료로부터 추론한 영향을 구분한다.
-5. 출처가 없거나 확인되지 않은 내용은 미해결 근거 공백에 기록한다.
-6. 기술 성숙도, 시장성, 이해관계자, 도메인 적용성 사이의 공통점,
-   차이점 및 상충 관계를 명시한다.
-7. 각 기술이 유리할 수 있는 적용 조건과 한계를 함께 작성한다.
-8. 두 기술의 상호 보완 가능성은 확정된 사실이 아닌
-   조건부 가능성으로 작성한다.
-9. 입력에 source_id가 있는 경우 해당 주장의 끝에
-   [source_id] 형식으로 표시한다.
-10. 입력에 없는 출처, 수치, 기업 사례와 도입 사례를 생성하지 않는다.
-
-다음 형식으로 작성하라.
-
-## 1. 관점별 공통점
-- 여러 평가 관점에서 공통으로 확인된 내용을 작성한다.
-
-## 2. 관점별 차이와 상충 관계
-- 기술 성숙도, 시장성, 이해관계자, 도메인 적용성 평가가
-  서로 다르게 나타나는 지점을 작성한다.
-
-## 3. 핵심 Trade-off
-### KIVI
-- 얻을 수 있는 이점과 함께 발생하는 부담을 작성한다.
-
-### InfiniGen
-- 얻을 수 있는 이점과 함께 발생하는 부담을 작성한다.
-
-## 4. 기술별 적용 조건과 한계
-### KIVI
-- 적합할 수 있는 조건
-- 적용 시 한계와 확인 사항
-
-### InfiniGen
-- 적합할 수 있는 조건
-- 적용 시 한계와 확인 사항
-
-## 5. 상호 보완 가능성
-- 두 기술을 함께 적용할 가능성과 추가로 검증해야 하는 내용을 작성한다.
-
-## 6. 미해결 근거 공백
-- 자료가 없거나 확인되지 않은 주장과 추가 조사가 필요한 내용을 작성한다.
-
-## 7. 종합 의견
-- 우열 판정 없이 관점에 따라 평가가 달라지는 이유를 정리한다.
-""".strip()
-
-
-def _to_serializable(value: Any) -> Any:
-    """State 값을 JSON 직렬화가 가능한 형태로 변환한다."""
-
-    if value is None:
-        return None
-
-    if hasattr(value, "model_dump"):
-        return value.model_dump()
-
-    if hasattr(value, "dict"):
-        return value.dict()
-
-    if isinstance(value, dict):
-        return {
-            str(key): _to_serializable(item)
-            for key, item in value.items()
-        }
-
-    if isinstance(value, (list, tuple, set)):
-        return [_to_serializable(item) for item in value]
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    return str(value)
-
-
 def _get_llm() -> ChatOpenAI:
-    """환경변수에 설정된 OpenAI 생성 LLM을 생성한다."""
-
+    """환경변수에 지정된 OpenAI 생성 모델을 만든다."""
     load_environment()
 
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
@@ -112,144 +21,182 @@ def _get_llm() -> ChatOpenAI:
 
     if provider != "openai":
         raise ValueError(
-            "LLM_PROVIDER는 'openai'여야 합니다. "
-            f"현재 값: {provider or '미설정'}"
+            "synthesis 노드는 LLM_PROVIDER=openai 설정이 필요합니다."
         )
 
     if not model_name:
-        raise ValueError(
-            "LLM_MODEL 환경변수가 설정되지 않았습니다."
-        )
+        raise ValueError("LLM_MODEL 환경변수가 설정되지 않았습니다.")
 
     if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY 환경변수가 설정되지 않았습니다."
-        )
+        raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
 
     return ChatOpenAI(
         model=model_name,
+        api_key=api_key,
     )
 
 
-def _get_response_text(response: Any) -> str:
-    """LLM 응답 객체에서 문자열 본문을 추출한다."""
+def _require_evaluation(
+    state: State,
+    key: str,
+) -> dict[str, Any]:
+    """필수 평가 결과가 존재하는지 확인한다."""
+    value = state.get(key)
 
-    content = getattr(response, "content", response)
+    if value is None:
+        raise ValueError(
+            f"{key}가 없습니다. 모든 관점별 평가가 완료된 후 "
+            "synthesis 노드를 실행해야 합니다."
+        )
 
-    if isinstance(content, str):
-        return content.strip()
+    return value
 
-    if isinstance(content, list):
-        text_parts: list[str] = []
 
-        for item in content:
-            if isinstance(item, str):
-                text_parts.append(item)
+def _collect_valid_evidence_ids(state: State) -> set[str]:
+    """KIVI와 InfiniGen 조사 결과에 실제 존재하는 근거 ID를 수집한다."""
+    evidence_ids: set[str] = set()
 
-            elif isinstance(item, dict):
-                text = item.get("text")
+    for key in ("kivi_evidence", "infinigen_evidence"):
+        research_result = state.get(key)
 
-                if text:
-                    text_parts.append(str(text))
+        if research_result is None:
+            continue
 
-            else:
-                text_parts.append(str(item))
+        for evidence in research_result.get("evidence", []):
+            evidence_id = evidence.get("id")
 
-        return "\n".join(text_parts).strip()
+            if evidence_id:
+                evidence_ids.add(evidence_id)
 
-    return str(content).strip()
+    return evidence_ids
+
+
+def _normalize_gaps(state: State) -> list[EvidenceGap]:
+    """검토되지 않은 공백과 검토 후 공백 없음 상태를 구별한다."""
+    evidence_gaps = state.get("evidence_gaps")
+
+    if evidence_gaps is None:
+        return [
+            {
+                "technology": None,
+                "criterion": "전체 근거 검토",
+                "reason": "evidence_gaps가 아직 검토되지 않았습니다.",
+            }
+        ]
+
+    return list(evidence_gaps)
+
+
+def _validate_synthesis(
+    synthesis: Synthesis,
+    valid_evidence_ids: set[str],
+    evidence_gaps: list[EvidenceGap],
+) -> Synthesis:
+    """LLM 결과를 스키마에 맞게 정규화하고 잘못된 근거 ID를 제거한다."""
+    cited_ids = [
+        evidence_id
+        for evidence_id in synthesis.get("cited_evidence_ids", [])
+        if evidence_id in valid_evidence_ids
+    ]
+
+    return {
+        "perspective_differences": [
+            str(item)
+            for item in synthesis.get("perspective_differences", [])
+            if str(item).strip()
+        ],
+        "tradeoffs": [
+            str(item)
+            for item in synthesis.get("tradeoffs", [])
+            if str(item).strip()
+        ],
+        "application_conditions": [
+            str(item)
+            for item in synthesis.get("application_conditions", [])
+            if str(item).strip()
+        ],
+        # 미해결 공백은 LLM이 임의로 만들지 않고
+        # evidence_check 노드가 확정한 값을 그대로 사용한다.
+        "unresolved_gaps": evidence_gaps,
+        "cited_evidence_ids": list(dict.fromkeys(cited_ids)),
+    }
 
 
 def synthesize(state: State) -> StateUpdate:
-    """
-    네 가지 관점별 평가 결과를 종합한다.
+    """관점별 평가의 차이·상충 관계·적용 조건을 중립적으로 종합한다."""
+    maturity_eval = _require_evaluation(state, "maturity_eval")
+    market_eval = _require_evaluation(state, "market_eval")
+    stakeholder_eval = _require_evaluation(state, "stakeholder_eval")
+    domain_eval = _require_evaluation(state, "domain_eval")
 
-    입력 State:
-        maturity_eval:
-            KIVI와 InfiniGen의 기술 성숙도 및 TRL 평가 결과.
-        market_eval:
-            시장 성장성, 상용화·채택 및 생태계 평가 결과.
-        stakeholder_eval:
-            운영자, 개발자, 이용자, 경쟁 기술 진영,
-            투자·산업 관계자 관점의 평가 결과.
-        domain_eval:
-            GPU 기반 클라우드 LLM 서비스 환경의 평가 결과.
-        evidence_gaps:
-            출처가 없거나 확인되지 않은 주장.
+    evidence_gaps = _normalize_gaps(state)
+    valid_evidence_ids = _collect_valid_evidence_ids(state)
 
-    출력 State:
-        synthesis:
-            관점별 공통점, 차이, 상충 관계, Trade-off,
-            적용 조건, 한계와 근거 공백을 포함한 종합 결과.
-    """
-
-    maturity_eval = state.get("maturity_eval")
-    market_eval = state.get("market_eval")
-    stakeholder_eval = state.get("stakeholder_eval")
-    domain_eval = state.get("domain_eval")
-    evidence_gaps = state.get("evidence_gaps", [])
-
-    missing_inputs: list[str] = []
-
-    if not maturity_eval:
-        missing_inputs.append("maturity_eval")
-
-    if not market_eval:
-        missing_inputs.append("market_eval")
-
-    if not stakeholder_eval:
-        missing_inputs.append("stakeholder_eval")
-
-    if not domain_eval:
-        missing_inputs.append("domain_eval")
-
-    input_data = {
-        "maturity_eval": _to_serializable(maturity_eval),
-        "market_eval": _to_serializable(market_eval),
-        "stakeholder_eval": _to_serializable(
-            stakeholder_eval
-        ),
-        "domain_eval": _to_serializable(domain_eval),
-        "evidence_gaps": _to_serializable(evidence_gaps),
-        "missing_inputs": missing_inputs,
+    synthesis_input = {
+        "selected_technologies": state["selected_technologies"],
+        "domain_and_criteria": state["domain_and_criteria"],
+        "maturity_eval": maturity_eval,
+        "market_eval": market_eval,
+        "stakeholder_eval": stakeholder_eval,
+        "domain_eval": domain_eval,
+        "evidence_gaps": evidence_gaps,
+        "valid_evidence_ids": sorted(valid_evidence_ids),
     }
 
-    user_prompt = f"""
-아래는 KIVI와 InfiniGen에 대한 관점별 평가 결과다.
+    prompt = f"""
+당신은 KV cache 최적화 기술 비교평가의 종합 분석 담당자입니다.
 
-누락된 평가 결과가 있으면 해당 내용을 임의로 보완하지 말고
-'미해결 근거 공백'에 명시하라.
+비교 대상:
+- 소프트웨어 접근: KIVI
+- 메모리 오프로딩 접근: InfiniGen
 
-<관점별 평가 결과>
-{json.dumps(input_data, ensure_ascii=False, indent=2)}
-</관점별 평가 결과>
+분석 도메인:
+- GPU 기반 클라우드 LLM 서비스
 
-제공된 자료만 사용하여 두 기술의 공통점, 차이점, 상충 관계,
-Trade-off, 적용 조건, 한계 및 근거 공백을 종합하라.
-""".strip()
+아래 관점별 평가 결과를 종합하십시오.
 
-    llm = _get_llm()
+반드시 지킬 원칙:
+1. 두 기술의 우열이나 최종 승자를 결정하지 마십시오.
+2. 기술 성숙도, 시장성, 이해관계자, 도메인 적용성에 따라
+   평가가 어떻게 달라지는지 설명하십시오.
+3. 공통점, 차이점, 상충 관계를 명확히 구분하십시오.
+4. KIVI와 InfiniGen의 적용 조건과 한계를 함께 정리하십시오.
+5. 평가 결과의 basis_status와 uncertainty를 고려하십시오.
+6. source_checked, inferred, public_estimate, unverified를 구분하십시오.
+7. valid_evidence_ids에 포함되지 않은 근거 ID를 만들지 마십시오.
+8. 공개되지 않은 정보는 사실처럼 단정하지 마십시오.
+9. KIVI와 InfiniGen을 함께 사용하는 보완 가능성도 검토하되,
+   제공된 근거로 판단할 수 없는 내용은 단정하지 마십시오.
+10. unresolved_gaps는 입력된 evidence_gaps를 기반으로 판단하십시오.
+11. 모든 결과는 한국어로 작성하십시오.
 
-    response = llm.invoke(
-        [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": user_prompt,
-            },
-        ]
+입력 데이터:
+{json.dumps(synthesis_input, ensure_ascii=False, indent=2)}
+
+다음 항목을 포함한 구조화 결과를 생성하십시오.
+- perspective_differences:
+  관점에 따라 평가가 달라지는 지점을 담은 문자열 목록
+- tradeoffs:
+  메모리 절감, 정확도, 전송 오버헤드, 처리량,
+  적용 복잡성 등의 상충 관계 목록
+- application_conditions:
+  기술별로 적합하거나 제약이 발생하는 적용 조건 목록
+- unresolved_gaps:
+  공개 자료만으로 판단하기 어려운 근거 공백 목록
+- cited_evidence_ids:
+  종합 판단에 실제 사용한 valid_evidence_ids 목록
+"""
+
+    structured_llm = _get_llm().with_structured_output(Synthesis)
+    raw_synthesis = structured_llm.invoke(prompt)
+
+    if not isinstance(raw_synthesis, dict):
+        raise TypeError("LLM이 Synthesis 형식의 결과를 반환하지 않았습니다.")
+
+    synthesis = _validate_synthesis(
+        synthesis=raw_synthesis,
+        valid_evidence_ids=valid_evidence_ids,
+        evidence_gaps=evidence_gaps,
     )
 
-    synthesis = _get_response_text(response)
-
-    if not synthesis:
-        raise ValueError(
-            "종합 Agent가 빈 결과를 반환했습니다."
-        )
-
-    return {
-        "synthesis": synthesis,
-    }
+    return {"synthesis": synthesis}

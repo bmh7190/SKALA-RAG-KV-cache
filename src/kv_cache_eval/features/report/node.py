@@ -1,110 +1,34 @@
-"""입력: 종합과 실제 사용 근거. 출력: report 하나. PDF 작성은 후속 작업."""
+"""입력: 종합과 실제 사용 근거. 출력: report 하나와 PDF 파일."""
 
 import json
 import os
+from html import escape
+from pathlib import Path
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 
 from kv_cache_eval.common.config import load_environment
+from kv_cache_eval.common.schemas import Evidence, ReportDraft, Synthesis
 from kv_cache_eval.common.state import State, StateUpdate
 
 
-SYSTEM_PROMPT = """
-당신은 KV Cache 최적화 기술에 대한 다관점 평가 보고서를 작성하는
-중립적인 기술 보고서 작성자다.
+REPORT_SECTION_TITLES = (
+    "SUMMARY",
+    "1. 분석 배경",
+    "2. 기술 선정 및 개요",
+    "3. 평가 기준 및 방법",
+    "4. 관점별 평가 결과",
+    "5. 종합 평가 및 시사점",
+    "6. 한계점",
+    "REFERENCE",
+)
 
-KIVI와 InfiniGen의 기술 근거, 기술 성숙도, 시장성, 이해관계자,
-도메인 적용성 및 종합 평가 결과를 바탕으로 보고서를 작성한다.
-
-다음 원칙을 반드시 준수하라.
-
-1. 입력으로 제공된 자료와 근거만 사용한다.
-2. KIVI와 InfiniGen의 우열을 판정하거나 하나의 기술을 추천하지 않는다.
-3. 서로 다른 실험 조건에서 측정된 수치를 직접 비교하지 않는다.
-4. 수치에는 가능한 경우 모델, 데이터셋, 하드웨어, 문맥 길이,
-   배치 크기 등 확인된 실험 조건을 함께 작성한다.
-5. 직접 확인된 사실과 기술 자료로부터 추론한 영향을 구분한다.
-6. 입력에 source_id가 있으면 해당 주장의 끝에
-   [source_id] 형식으로 표시한다.
-7. 입력에 없는 출처, 수치, 기업 사례, 시장 규모 및
-   도입 사례를 생성하지 않는다.
-8. 근거가 부족하거나 확인되지 않은 내용은 한계점에 명시한다.
-9. 관점별 평가가 일치하는 부분뿐 아니라 상충하는 부분도 작성한다.
-10. REFERENCE에는 본문에서 실제로 인용한 source_id만 포함한다.
-11. SUMMARY는 보고서 소개가 아니라 전체 평가 결과의 핵심 요약이다.
-12. SUMMARY는 전체 보고서의 1/2페이지를 넘지 않도록 간결하게 작성한다.
-13. 보고서는 한국어 Markdown 형식으로 작성한다.
-
-보고서 목차는 반드시 다음 순서를 따른다.
-
-# SUMMARY
-
-# 1. 분석 배경
-## 1.1 KV Cache의 역할
-## 1.2 KV Cache 병목 문제
-## 1.3 분석 목적
-
-# 2. 평가 대상 기술 선정
-## 2.1 KIVI
-## 2.2 InfiniGen
-## 2.3 두 기술의 접근 방식 비교
-
-# 3. 기술 개요
-## 3.1 KIVI
-## 3.2 InfiniGen
-## 3.3 실험 결과 해석 기준
-
-# 4. 관점별 평가
-## 4.1 기술 성숙도
-## 4.2 시장성
-## 4.3 이해관계자
-## 4.4 도메인 적용
-
-# 5. 관점 종합 및 시사점
-## 5.1 관점별 평가 요약
-## 5.2 관점 간 차이 및 Trade-off
-## 5.3 적용 조건에 따른 해석
-
-# 6. 분석 한계 및 편향 방지
-## 6.1 공개 정보 기반 평가의 한계
-## 6.2 실험 조건 차이
-## 6.3 확증편향 방지 조치
-
-# REFERENCE
-""".strip()
-
-
-def _to_serializable(value: Any) -> Any:
-    """State 값을 JSON 직렬화가 가능한 형태로 변환한다."""
-
-    if value is None:
-        return None
-
-    if hasattr(value, "model_dump"):
-        return value.model_dump()
-
-    if hasattr(value, "dict"):
-        return value.dict()
-
-    if isinstance(value, dict):
-        return {
-            str(key): _to_serializable(item)
-            for key, item in value.items()
-        }
-
-    if isinstance(value, (list, tuple, set)):
-        return [_to_serializable(item) for item in value]
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    return str(value)
+DEFAULT_PDF_PATH = Path("outputs/kv_cache_evaluation_report.pdf")
 
 
 def _get_llm() -> ChatOpenAI:
-    """환경변수에 설정된 OpenAI 생성 LLM을 생성한다."""
-
+    """환경변수에 지정된 OpenAI 생성 모델을 만든다."""
     load_environment()
 
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
@@ -113,255 +37,420 @@ def _get_llm() -> ChatOpenAI:
 
     if provider != "openai":
         raise ValueError(
-            "LLM_PROVIDER는 'openai'여야 합니다. "
-            f"현재 값: {provider or '미설정'}"
+            "report 노드는 LLM_PROVIDER=openai 설정이 필요합니다."
         )
 
     if not model_name:
-        raise ValueError(
-            "LLM_MODEL 환경변수가 설정되지 않았습니다."
-        )
+        raise ValueError("LLM_MODEL 환경변수가 설정되지 않았습니다.")
 
     if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY 환경변수가 설정되지 않았습니다."
-        )
+        raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
 
     return ChatOpenAI(
         model=model_name,
+        api_key=api_key,
     )
 
 
-def _get_response_text(response: Any) -> str:
-    """LLM 응답 객체에서 문자열 본문을 추출한다."""
-
-    content = getattr(response, "content", response)
-
-    if isinstance(content, str):
-        return content.strip()
-
-    if isinstance(content, list):
-        text_parts: list[str] = []
-
-        for item in content:
-            if isinstance(item, str):
-                text_parts.append(item)
-
-            elif isinstance(item, dict):
-                text = item.get("text")
-
-                if text:
-                    text_parts.append(str(text))
-
-            else:
-                text_parts.append(str(item))
-
-        return "\n".join(text_parts).strip()
-
-    return str(content).strip()
-
-
-def _collect_source_ids(value: Any) -> set[str]:
-    """
-    입력 자료에서 실제 존재하는 source_id를 재귀적으로 수집한다.
-
-    보고서 Agent가 존재하지 않는 출처 식별자를 생성하지 않도록
-    허용 가능한 source_id 목록을 만든다.
-    """
-
-    source_ids: set[str] = set()
+def _require_value(state: State, key: str) -> Any:
+    """보고서 생성에 필요한 State 값이 존재하는지 확인한다."""
+    value = state.get(key)
 
     if value is None:
-        return source_ids
+        raise ValueError(
+            f"{key}가 없습니다. 선행 노드가 완료된 후 "
+            "report 노드를 실행해야 합니다."
+        )
 
-    if hasattr(value, "model_dump"):
-        value = value.model_dump()
+    return value
 
-    elif hasattr(value, "dict"):
-        value = value.dict()
 
-    if isinstance(value, dict):
-        source_id = value.get("source_id")
+def _collect_evidence(state: State) -> dict[str, Evidence]:
+    """두 기술의 조사 결과를 근거 ID 기준으로 정리한다."""
+    evidence_by_id: dict[str, Evidence] = {}
 
-        if source_id:
-            source_ids.add(str(source_id))
+    for key in ("kivi_evidence", "infinigen_evidence"):
+        research_result = state.get(key)
 
-        for item in value.values():
-            source_ids.update(
-                _collect_source_ids(item)
+        if research_result is None:
+            continue
+
+        for evidence in research_result.get("evidence", []):
+            evidence_id = evidence.get("id")
+
+            if evidence_id:
+                evidence_by_id[evidence_id] = evidence
+
+    return evidence_by_id
+
+
+def _format_reference(evidence: Evidence) -> str:
+    """Evidence를 REFERENCE에 사용할 문자열로 변환한다."""
+    evidence_id = evidence["id"]
+    technology = evidence["technology"]
+    source = evidence["source"]
+
+    document = source.get("document") or "문서명 미확인"
+    url = source.get("url")
+    page = source.get("page")
+
+    parts = [f"[{evidence_id}] {technology}. {document}."]
+
+    if page is not None:
+        parts.append(f"p. {page}.")
+
+    if url:
+        parts.append(url)
+
+    limitations = evidence.get("limitations", [])
+
+    if limitations:
+        parts.append(
+            "근거 한계: " + "; ".join(str(item) for item in limitations)
+        )
+
+    return " ".join(parts)
+
+
+def _build_reference_text(
+    cited_evidence_ids: list[str],
+    evidence_by_id: dict[str, Evidence],
+) -> str:
+    """실제로 인용된 근거만 REFERENCE 문자열로 만든다."""
+    references: list[str] = []
+
+    for evidence_id in cited_evidence_ids:
+        evidence = evidence_by_id.get(evidence_id)
+
+        if evidence is None:
+            continue
+
+        references.append(_format_reference(evidence))
+
+    if not references:
+        return "보고서에 인용된 확인 가능 근거가 없습니다."
+
+    return "\n".join(
+        f"{index}. {reference}"
+        for index, reference in enumerate(references, start=1)
+    )
+
+
+def _normalize_sections(
+    raw_report: ReportDraft,
+    reference_text: str,
+) -> list[tuple[str, str]]:
+    """LLM 결과를 지정된 보고서 목차 순서로 정규화한다."""
+    generated_sections: dict[str, str] = {}
+
+    for section in raw_report.get("sections", []):
+        if not isinstance(section, (list, tuple)) or len(section) != 2:
+            continue
+
+        title = str(section[0]).strip()
+        content = str(section[1]).strip()
+
+        if title:
+            generated_sections[title] = content
+
+    normalized_sections: list[tuple[str, str]] = []
+
+    for title in REPORT_SECTION_TITLES:
+        if title == "REFERENCE":
+            content = reference_text
+        else:
+            content = generated_sections.get(title, "").strip()
+
+            if not content:
+                content = "해당 항목의 분석 결과가 생성되지 않았습니다."
+
+        normalized_sections.append((title, content))
+
+    return normalized_sections
+
+
+def _normalize_report(
+    raw_report: ReportDraft,
+    synthesis: Synthesis,
+    evidence_by_id: dict[str, Evidence],
+) -> ReportDraft:
+    """보고서의 근거 ID와 섹션을 State 스키마에 맞게 정리한다."""
+    requested_ids = list(raw_report.get("cited_evidence_ids", []))
+    requested_ids.extend(synthesis.get("cited_evidence_ids", []))
+
+    cited_ids = [
+        evidence_id
+        for evidence_id in dict.fromkeys(requested_ids)
+        if evidence_id in evidence_by_id
+    ]
+
+    reference_text = _build_reference_text(
+        cited_evidence_ids=cited_ids,
+        evidence_by_id=evidence_by_id,
+    )
+
+    sections = _normalize_sections(
+        raw_report=raw_report,
+        reference_text=reference_text,
+    )
+
+    return {
+        "sections": sections,
+        "cited_evidence_ids": cited_ids,
+    }
+
+
+def _paragraph_text(text: str) -> str:
+    """ReportLab Paragraph에서 안전하게 표시할 문자열로 변환한다."""
+    escaped_text = escape(text)
+    return escaped_text.replace("\n", "<br/>")
+
+
+def _resolve_pdf_path() -> Path:
+    """환경변수가 있으면 해당 경로를, 없으면 기본 경로를 사용한다."""
+    configured_path = os.getenv("REPORT_PDF_PATH", "").strip()
+
+    if configured_path:
+        return Path(configured_path).expanduser()
+
+    return DEFAULT_PDF_PATH
+
+
+def _write_pdf(report: ReportDraft, output_path: Path) -> None:
+    """구조화된 보고서를 한글 PDF 파일로 저장한다."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.platypus import (
+            PageBreak,
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF 생성을 위해 reportlab이 필요합니다. "
+            "`uv sync --locked --extra llm-openai --extra report`를 "
+            "실행하십시오."
+        ) from exc
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ReportLab에서 제공하는 한국어 CID 폰트를 사용한다.
+    # 운영체제별 로컬 폰트 경로에 의존하지 않으므로 팀 환경에서 사용하기 쉽다.
+    font_name = "HYSMyeongJo-Medium"
+    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+
+    document = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        rightMargin=20 * mm,
+        leftMargin=20 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title="KIVI와 InfiniGen 다관점 평가 보고서",
+        author="SKALA-RAG-KV-cache",
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        name="KoreanTitle",
+        parent=styles["Title"],
+        fontName=font_name,
+        fontSize=18,
+        leading=26,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#1F2937"),
+        spaceAfter=12,
+    )
+
+    summary_title_style = ParagraphStyle(
+        name="KoreanSummaryTitle",
+        parent=styles["Heading1"],
+        fontName=font_name,
+        fontSize=15,
+        leading=22,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#111827"),
+        spaceBefore=8,
+        spaceAfter=8,
+    )
+
+    heading_style = ParagraphStyle(
+        name="KoreanHeading",
+        parent=styles["Heading1"],
+        fontName=font_name,
+        fontSize=14,
+        leading=21,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#1F2937"),
+        spaceBefore=12,
+        spaceAfter=8,
+    )
+
+    body_style = ParagraphStyle(
+        name="KoreanBody",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=9.5,
+        leading=16,
+        alignment=TA_JUSTIFY,
+        wordWrap="CJK",
+        spaceAfter=8,
+    )
+
+    reference_style = ParagraphStyle(
+        name="KoreanReference",
+        parent=body_style,
+        fontSize=8.5,
+        leading=14,
+        alignment=TA_LEFT,
+    )
+
+    story = [
+        Paragraph(
+            "KV Cache 최적화 기술 다관점 평가 보고서",
+            title_style,
+        ),
+        Paragraph(
+            "KIVI와 InfiniGen 비교",
+            body_style,
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    for index, (section_title, section_content) in enumerate(
+        report["sections"]
+    ):
+        if section_title == "SUMMARY":
+            heading = summary_title_style
+            content_style = body_style
+        elif section_title == "REFERENCE":
+            # REFERENCE는 보고서의 마지막 장에서 시작한다.
+            if index > 0:
+                story.append(PageBreak())
+
+            heading = heading_style
+            content_style = reference_style
+        else:
+            heading = heading_style
+            content_style = body_style
+
+        story.append(Paragraph(escape(section_title), heading))
+        story.append(
+            Paragraph(
+                _paragraph_text(section_content),
+                content_style,
             )
+        )
 
-    elif isinstance(value, (list, tuple, set)):
-        for item in value:
-            source_ids.update(
-                _collect_source_ids(item)
-            )
+        if section_title == "SUMMARY":
+            # SUMMARY는 프롬프트에서 500~700자로 제한하고,
+            # 이후 본문과 시각적으로 구분한다.
+            story.append(Spacer(1, 5 * mm))
 
-    return source_ids
+    document.build(story)
 
 
 def write_report(state: State) -> StateUpdate:
-    """
-    기술 근거와 관점별 평가 결과를 최종 Markdown 보고서로 작성한다.
+    """종합 결과와 근거를 이용해 최종 보고서와 PDF를 생성한다."""
+    synthesis = _require_value(state, "synthesis")
+    maturity_eval = _require_value(state, "maturity_eval")
+    market_eval = _require_value(state, "market_eval")
+    stakeholder_eval = _require_value(state, "stakeholder_eval")
+    domain_eval = _require_value(state, "domain_eval")
 
-    입력 State:
-        selected_technologies:
-            Human이 선정한 KIVI와 InfiniGen.
-        domain_and_criteria:
-            평가 도메인 및 관점별 평가 기준.
-        kivi_evidence:
-            KIVI의 원리, 실험 조건·결과, 한계와 출처.
-        infinigen_evidence:
-            InfiniGen의 원리, 실험 조건·결과, 한계와 출처.
-        maturity_eval:
-            기술 성숙도 및 TRL 평가.
-        market_eval:
-            시장 성장성, 상용화·채택 및 생태계 평가.
-        stakeholder_eval:
-            이해관계자별 이점, 부담과 근거 수준.
-        domain_eval:
-            GPU 기반 클라우드 LLM 서비스 환경의 적용성 평가.
-        evidence_gaps:
-            출처가 없거나 확인되지 않은 주장.
-        synthesis:
-            관점별 공통점, 차이점, 상충 관계와 적용 조건.
+    evidence_by_id = _collect_evidence(state)
 
-    출력 State:
-        report:
-            SUMMARY부터 REFERENCE까지 포함한 Markdown 보고서.
-    """
-
-    report_data = {
-        "selected_technologies": _to_serializable(
-            state.get("selected_technologies")
-        ),
-        "domain_and_criteria": _to_serializable(
-            state.get("domain_and_criteria")
-        ),
-        "kivi_evidence": _to_serializable(
-            state.get("kivi_evidence")
-        ),
-        "infinigen_evidence": _to_serializable(
-            state.get("infinigen_evidence")
-        ),
-        "maturity_eval": _to_serializable(
-            state.get("maturity_eval")
-        ),
-        "market_eval": _to_serializable(
-            state.get("market_eval")
-        ),
-        "stakeholder_eval": _to_serializable(
-            state.get("stakeholder_eval")
-        ),
-        "domain_eval": _to_serializable(
-            state.get("domain_eval")
-        ),
-        "evidence_gaps": _to_serializable(
-            state.get("evidence_gaps", [])
-        ),
-        "synthesis": _to_serializable(
-            state.get("synthesis")
-        ),
+    report_input = {
+        "selected_technologies": state["selected_technologies"],
+        "domain_and_criteria": state["domain_and_criteria"],
+        "synthesis": synthesis,
+        "evaluations": {
+            "maturity": maturity_eval,
+            "market": market_eval,
+            "stakeholder": stakeholder_eval,
+            "domain": domain_eval,
+        },
+        "evidence": evidence_by_id,
     }
 
-    required_results = {
-        "maturity_eval": state.get("maturity_eval"),
-        "market_eval": state.get("market_eval"),
-        "stakeholder_eval": state.get(
-            "stakeholder_eval"
-        ),
-        "domain_eval": state.get("domain_eval"),
-        "synthesis": state.get("synthesis"),
-    }
+    prompt = f"""
+당신은 KV cache 최적화 기술 다관점 평가 보고서 작성자입니다.
 
-    missing_results = [
-        key
-        for key, value in required_results.items()
-        if not value
-    ]
+비교 대상:
+- KIVI: KV cache 2비트 비대칭 양자화 기반 소프트웨어 접근
+- InfiniGen: 필요한 KV 항목을 선택적으로 프리패치하는
+  호스트 메모리 오프로딩 접근
 
-    allowed_source_ids = sorted(
-        _collect_source_ids(report_data)
+평가 도메인:
+- GPU 기반 클라우드 LLM 서비스
+
+다음 원칙을 반드시 지키십시오.
+1. 특정 기술을 추천하거나 승자를 결정하지 마십시오.
+2. 관점에 따라 평가가 달라지는 지점을 중립적으로 기술하십시오.
+3. 확인된 사실, 공개 정보 기반 추정, 분석상 추론,
+   미확인 정보를 구분하십시오.
+4. 입력에 존재하지 않는 도입 사례나 성능 수치를 만들지 마십시오.
+5. 근거를 사용할 때는 문장에 [근거 ID] 형식으로 표시하십시오.
+6. 제공된 evidence에 없는 근거 ID를 만들지 마십시오.
+7. 공개 자료 기반 TRL은 추정이라는 점을 명시하십시오.
+8. 논문 환경과 실제 운영 환경의 차이를 한계에 포함하십시오.
+9. REFERENCE 내용은 코드에서 실제 인용 근거로 다시 작성하므로,
+   임의의 자료를 추가하지 마십시오.
+10. 모든 본문은 한국어로 작성하십시오.
+
+보고서 섹션은 반드시 다음 순서와 정확한 제목을 사용하십시오.
+1. SUMMARY
+2. 1. 분석 배경
+3. 2. 기술 선정 및 개요
+4. 3. 평가 기준 및 방법
+5. 4. 관점별 평가 결과
+6. 5. 종합 평가 및 시사점
+7. 6. 한계점
+8. REFERENCE
+
+작성 기준:
+- SUMMARY는 개요 목록이 아니라 전체 평가 결과의 핵심 요약입니다.
+- SUMMARY는 PDF 반 페이지를 넘지 않도록 약 500~700자로 작성하십시오.
+- 기술 선정 및 개요에는 KIVI와 InfiniGen의 선정 이유,
+  핵심 원리와 한계를 포함하십시오.
+- 관점별 평가 결과에는 기술 성숙도, 시장성, 이해관계자,
+  도메인 적용성을 모두 포함하십시오.
+- 종합 평가 및 시사점에는 공통점, 차이점, 상충 관계,
+  기술별 적용 조건을 포함하십시오.
+- 한계점에는 공개 정보 기반 분석, 논문과 운영 환경의 차이,
+  확증편향을 줄이기 위한 조치를 포함하십시오.
+- REFERENCE 섹션은 빈 문자열로 두어도 됩니다.
+  실제 사용된 근거만 코드에서 입력합니다.
+
+입력 데이터:
+{json.dumps(report_input, ensure_ascii=False, indent=2)}
+
+ReportDraft 구조에 맞춰 다음 값을 생성하십시오.
+- sections: (섹션 제목, 본문) 쌍의 목록
+- cited_evidence_ids: 보고서 작성에 실제 사용한 근거 ID 목록
+"""
+
+    structured_llm = _get_llm().with_structured_output(ReportDraft)
+    raw_report = structured_llm.invoke(prompt)
+
+    if not isinstance(raw_report, dict):
+        raise TypeError("LLM이 ReportDraft 형식의 결과를 반환하지 않았습니다.")
+
+    report = _normalize_report(
+        raw_report=raw_report,
+        synthesis=synthesis,
+        evidence_by_id=evidence_by_id,
     )
 
-    user_prompt = f"""
-아래 자료를 이용하여 최종 다관점 평가 보고서를 작성하라.
+    pdf_path = _resolve_pdf_path()
+    _write_pdf(report=report, output_path=pdf_path)
 
-<보고서 입력 자료>
-{json.dumps(report_data, ensure_ascii=False, indent=2)}
-</보고서 입력 자료>
-
-<누락된 평가 결과>
-{json.dumps(missing_results, ensure_ascii=False)}
-</누락된 평가 결과>
-
-<사용 가능한 source_id>
-{json.dumps(allowed_source_ids, ensure_ascii=False, indent=2)}
-</사용 가능한 source_id>
-
-작성 지침:
-
-1. 누락된 평가 결과가 있으면 내용을 임의로 보완하지 않는다.
-2. 누락된 내용은 '6. 분석 한계 및 편향 방지'에 명시한다.
-3. 본문의 인용에는 위의 사용 가능한 source_id만 사용한다.
-4. source_id가 없는 근거는 출처가 확인되지 않은 것으로 표시한다.
-5. REFERENCE에는 본문에서 실제 사용한 source_id와 입력 자료에
-   포함된 서지정보만 기재한다.
-6. 서지정보가 부족하면 임의로 채우지 말고 확인 가능한 정보만 기재한다.
-7. 관점별 점수가 있다면 점수와 함께 판정 근거를 설명한다.
-8. KIVI는 KV Cache의 저장 크기를 줄이는 접근으로 설명한다.
-9. InfiniGen은 호스트 메모리의 KV Cache 중 필요한 항목을
-   선택적으로 GPU로 가져오는 접근으로 설명한다.
-10. 두 기술이 경쟁 관계이면서 조건에 따라 보완적으로 사용될
-    가능성이 있음을 근거 범위 안에서 분석한다.
-11. 최종 출력에는 작성 안내나 부가 설명 없이 보고서 본문만 포함한다.
-""".strip()
-
-    llm = _get_llm()
-
-    response = llm.invoke(
-        [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": user_prompt,
-            },
-        ]
-    )
-
-    report = _get_response_text(response)
-
-    if not report:
-        raise ValueError(
-            "보고서 Agent가 빈 결과를 반환했습니다."
-        )
-
-    required_headings = [
-        "# SUMMARY",
-        "# 1. 분석 배경",
-        "# 2. 평가 대상 기술 선정",
-        "# 3. 기술 개요",
-        "# 4. 관점별 평가",
-        "# 5. 관점 종합 및 시사점",
-        "# 6. 분석 한계 및 편향 방지",
-        "# REFERENCE",
-    ]
-
-    missing_headings = [
-        heading
-        for heading in required_headings
-        if heading not in report
-    ]
-
-    if missing_headings:
-        raise ValueError(
-            "보고서에서 필수 목차가 누락되었습니다: "
-            + ", ".join(missing_headings)
-        )
-
-    return {
-        "report": report,
-    }
+    return {"report": report}
