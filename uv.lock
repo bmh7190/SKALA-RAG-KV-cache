@@ -597,6 +597,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "langgraph" },
+    { name = "python-dotenv" },
 ]
 
 [package.optional-dependencies]
@@ -636,6 +637,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.0.1,<2" },
     { name = "pdfplumber", marker = "extra == 'rag'", specifier = ">=0.11.8,<1" },
     { name = "pypdf", marker = "extra == 'rag'", specifier = ">=6,<7" },
+    { name = "python-dotenv", specifier = ">=1.2.1,<2" },
     { name = "reportlab", marker = "extra == 'report'", specifier = ">=4,<5" },
     { name = "sentence-transformers", marker = "extra == 'rag'", specifier = ">=5.1.1,<6" },
 ]

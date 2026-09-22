@@ -6,7 +6,7 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 - **구현됨:** 공유 State·자료형·초기값, 구조적 근거 공백 검사, 재조사 횟수 라우팅, 병렬 조사/평가 합류 그래프, 오프라인 smoke test.
 - **TODO:** 원문 수집·RAG·출처 검증, 네 평가 노드, 내용 타당성 검사, 종합, 보고서 및 PDF 생성. 기본 기능 노드는 `NotImplementedError`로 중단됩니다. 테스트 대체 노드의 빈 데이터와 문구는 연구 결과가 아닙니다.
-- LLM 제공자와 모델은 아직 선정하지 않았습니다. 임베딩 후보 `intfloat/multilingual-e5-small`도 검색 품질 검증 전이며 다운로드하거나 실행하지 않습니다.
+- 생성 LLM 제공자와 모델은 아직 선정하지 않았습니다. 임베딩 모델은 사용자가 `BAAI/bge-m3`로 지정했으며 검색 품질 검증, 가중치 다운로드, 추론은 아직 하지 않았습니다.
 
 ## 설치와 실행
 
@@ -28,13 +28,42 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 
 | 설치 범위 | 패키지와 용도 |
 | --- | --- |
-| 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용 |
+| 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용. `python-dotenv`: 명시적 `.env` 로딩 함수에 사용 |
 | `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 후속 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
 | `web` | `langchain-tavily`: 후속 웹 검색용 |
 | `report` | `reportlab`: 후속 PDF 생성용 |
 | `llm-openai`, `llm-ollama` | 실습과 유사한 LLM 연결을 선택할 때 사용할 클라이언트. 제공자나 모델의 기본값을 정하지 않음 |
 
-전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. `.env.example`의 빈 `LLM_PROVIDER`, `LLM_MODEL`은 후속 구현 시 결정합니다. smoke test는 키·원문·네트워크가 필요 없습니다.
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. smoke test는 키·원문·네트워크가 필요 없습니다.
+
+### 환경변수와 필요한 키
+
+```bash
+cp .env.example .env
+# .env를 열어 사용할 기능에 필요한 값만 직접 입력
+```
+
+| 변수 | 언제 필요한가 |
+| --- | --- |
+| `LLM_PROVIDER`, `LLM_MODEL` | 후속 생성 LLM 구현에서 선택할 값. 현재 미정이며 자동으로 클라이언트를 생성하지 않음 |
+| `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 공개 모델을 로컬로 사용할 계획이며 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
+| `OPENAI_API_KEY` | OpenAI를 생성 LLM으로 선택하고 실제 호출할 때만 필요 |
+| `TAVILY_API_KEY` | Tavily 웹 검색을 구현하고 호출할 때만 필요 |
+| `OLLAMA_HOST` | Ollama 서버 주소를 기본값과 다르게 쓸 때만 필요. 로컬 Ollama에는 일반적으로 API 키가 없지만 실행 중인 서버와 선택한 모델이 필요 |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | 추적은 기본 `false`. 사용하기로 선택한 경우에만 `true`와 키·프로젝트 설정 |
+
+`BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. 현재 RAG 의존성은 `sentence-transformers`/`HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 준비합니다. 모델의 sparse·multi-vector 기능을 자동으로 쓰지는 않습니다. 모델명 지정이 검색 품질 검증을 뜻하지는 않습니다.
+
+`.env`는 파일만 만든다고 자동 적용되지 않습니다. 후속 기능의 진입점에서 **클라이언트를 만들기 전에** 다음처럼 명시적으로 호출해야 합니다.
+
+```python
+from kv_cache_eval.common.config import get_embedding_model, load_environment
+
+load_environment()  # 현재 작업 디렉터리의 .env; 다른 위치라면 경로를 인수로 전달
+embedding_model = get_embedding_model()
+```
+
+`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `OLLAMA_HOST`는 설치된 Ollama Python 클라이언트가 읽는 변수이며, 별도의 `OLLAMA_BASE_URL` 변수를 자동 인식하는 것으로 가정하지 않습니다. `.env`는 Git에서 무시됩니다. 실제 API 호출은 각 기능 노드 구현 후에만 일어납니다.
 
 ## 그래프
 
@@ -99,7 +128,7 @@ flowchart TD
 | 보고서 | `src/kv_cache_eval/features/report/node.py` |
 | 배선·재조사 | `src/kv_cache_eval/graph/workflow.py`, `gates.py` |
 
-기술 조사는 재사용 함수 `research_technology(state, technology)`를 구현하고 KIVI/InfiniGen 결과를 각각 별도 키에 반환합니다. 고른 RAG 원문 총합은 **200페이지 이하**로 관리합니다. 200페이지는 채울 목표나 보고서 분량이 아닙니다. `rag.py`에 E5의 `query:`/`passage:` 전처리와 token 기준 분할, 출처·페이지 추적을 구현합니다. 원문은 `data/documents/`에 로컬로 두고 저장소에는 포함하지 않습니다. 인덱스·캐시·`.env`·PDF도 저장하지 않습니다.
+기술 조사는 재사용 함수 `research_technology(state, technology)`를 구현하고 KIVI/InfiniGen 결과를 각각 별도 키에 반환합니다. 고른 RAG 원문 총합은 **200페이지 이하**로 관리합니다. 200페이지는 채울 목표나 보고서 분량이 아닙니다. `rag.py`에 BGE-M3 토큰 기준 분할, dense 검색, 출처·페이지 추적을 구현합니다. [모델 카드](https://huggingface.co/BAAI/bge-m3)는 검색 질의에 별도의 instruction 접두어를 요구하지 않습니다. 원문은 `data/documents/`에 로컬로 두고 저장소에는 포함하지 않습니다. 인덱스·캐시·`.env`·PDF도 저장하지 않습니다.
 
 보고서는 **SUMMARY**로 시작해 **REFERENCE**로 끝나며 실제 사용한 근거만 인용해야 합니다. PDF 출력은 후속 기능입니다.
 
