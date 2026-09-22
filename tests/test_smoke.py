@@ -87,10 +87,11 @@ class SmokeTest(unittest.TestCase):
 
     def test_default_function_node_reports_unimplemented(self):
         with self.assertRaises(NotImplementedError):
-            # 두 기술 조사는 실제 RAG/LLM을 사용하므로 배선 테스트에서만 대체한다.
+            # 기술 조사와 시장성 평가는 실제 API를 사용하므로 배선 테스트에서만 대체한다.
             build_graph({
                 "research_kivi": lambda state: {"kivi_evidence": {"evidence": [], "notes": []}},
                 "research_infinigen": lambda state: {"infinigen_evidence": {"evidence": [], "notes": []}},
+                "market": lambda state: {"market_eval": {"evaluations": [], "notes": []}},
                 "domain": lambda state: {"domain_eval": {"evaluations": [], "notes": []}},
             }).invoke(new_state())
 
