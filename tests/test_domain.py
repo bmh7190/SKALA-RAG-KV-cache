@@ -51,8 +51,13 @@ class DomainNodeTest(unittest.TestCase):
             ]}
 
         with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke) as llm:
-            result = evaluate(state)["domain_eval"]
+            update = evaluate(state)
+            result = update["domain_eval"]
         self.assertEqual(llm.call_count, 2)
+        self.assertEqual({item["id"] for item in update["domain_evidence"]["evidence"]},
+                         {"kivi", "infinigen"})
+        self.assertIn("KIVI", result["text"])
+        self.assertIn("InfiniGen", result["text"])
         self.assertEqual(len(result["evaluations"]), 2 * len(DOMAIN_RUBRIC))
         for technology, score in (("KIVI", 4), ("InfiniGen", 2)):
             row = next(item for item in result["evaluations"]
@@ -65,7 +70,9 @@ class DomainNodeTest(unittest.TestCase):
 
     def test_missing_research_result_is_noted_without_llm(self):
         with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=AssertionError("LLM called")):
-            result = evaluate(new_state())["domain_eval"]
+            update = evaluate(new_state())
+            result = update["domain_eval"]
+        self.assertEqual(update["domain_evidence"]["evidence"], [])
         self.assertEqual(len(result["evaluations"]), 2 * len(DOMAIN_RUBRIC))
         self.assertTrue(all(row["basis_status"] == "unverified" for row in result["evaluations"]))
         self.assertTrue(any("조사 결과가 아직 제공되지" in note for note in result["notes"]))
@@ -86,13 +93,44 @@ class DomainNodeTest(unittest.TestCase):
             }], "notes": []}
 
         with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke) as llm:
-            result = evaluate(state)["domain_eval"]
+            update = evaluate(state)
+            result = update["domain_eval"]
         self.assertEqual(llm.call_count, 1)
+        self.assertEqual(update["domain_evidence"]["evidence"], [])
         row = next(item for item in result["evaluations"]
                    if item["technology"] == "KIVI" and item["criterion"] == CRITERION)
         self.assertIsNone(row["score"])
         self.assertEqual(row["evidence_ids"], [])
         self.assertEqual(row["basis_status"], "unverified")
+
+    def test_rejected_rationale_is_excluded_from_text_and_domain_evidence(self):
+        state = new_state()
+        claim = "KIVI 적용에는 라이브러리 설정 변경만 필요하다."
+        state["kivi_evidence"] = {"evidence": [evidence("KIVI", claim)], "notes": []}
+        state["infinigen_evidence"] = {"evidence": [], "notes": []}
+
+        def fake_invoke(messages, schema):
+            if schema is OUTPUT_SCHEMA:
+                return {"evaluations": [{
+                    "technology": "KIVI", "criterion": CRITERION, "judgment": claim,
+                    "score": 4, "rationale": "출처에 없는 운영 성과 주장",
+                    "supports": [{"evidence_id": "kivi", "quote": claim}],
+                    "measurement": None, "uncertainty": None,
+                }], "notes": []}
+            self.assertIs(schema, VERIFY_SCHEMA)
+            return {"reviews": [{
+                "technology": "KIVI", "criterion": CRITERION, "supported": False,
+                "measurement_supported": False, "rubric_supported": False,
+                "reason": "rationale가 근거에 없음",
+            }]}
+
+        with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke):
+            update = evaluate(state)
+        row = next(item for item in update["domain_eval"]["evaluations"]
+                   if item["technology"] == "KIVI" and item["criterion"] == CRITERION)
+        self.assertEqual(row["basis_status"], "unverified")
+        self.assertEqual(update["domain_evidence"]["evidence"], [])
+        self.assertNotIn("출처에 없는 운영 성과 주장", update["domain_eval"]["text"])
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 ## 현재 상태
 
-- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, KIVI TRL 평가, 두 기술의 시장성·도메인 적합성 평가, 공유 State와 근거 공백 검사, 단일 조사·병렬 평가 Graph 배선.
-- **TODO:** InfiniGen TRL·이해관계자 평가, 종합, 최종 보고서·PDF. `main.py`는 기존 전체 Graph를 실행하지만 미구현 노드에서는 중단될 수 있습니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
+- **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, 두 기술의 TRL·시장성·이해관계자·도메인 적합성 평가, 공유 State와 근거 공백 검사, 단일 조사·병렬 평가 Graph 배선.
+- **TODO:** 종합, 최종 보고서·PDF. `main.py`는 기존 전체 Graph를 실행하지만 미구현 노드에서는 중단될 수 있습니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
 - 두 기술의 로컬 검색 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
 ## 설치와 실행
@@ -27,7 +27,7 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 .venv/bin/python main.py
 ```
 
-`main.py`는 하드코딩한 질문으로 `graph.run(QUESTION)`을 호출합니다. Graph의 단일 기술 조사 노드가 같은 엔진으로 KIVI와 InfiniGen을 조사한 뒤 네 평가 노드로 연결합니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이해관계자·종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
+`main.py`는 하드코딩한 질문으로 `graph.run(QUESTION)`을 호출합니다. Graph의 단일 기술 조사 노드가 같은 엔진으로 KIVI와 InfiniGen을 조사한 뒤 네 평가 노드로 연결합니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
 
 `pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
 
@@ -39,7 +39,7 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 | `report` | `reportlab`: 후속 PDF 생성용 |
 | `llm-openai` | 두 기술 조사와 구현된 평가에서 `LLM_PROVIDER=openai`로 선택할 때 사용할 클라이언트. 모델의 기본값은 없음 |
 
-전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 미구현 이해관계자·종합·보고서 노드 때문에 기본 전체 실행은 완료되지 않습니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 미구현 종합·보고서 노드 때문에 기본 전체 실행은 완료되지 않습니다. 단위 테스트는 키·원문·네트워크가 필요 없습니다.
 
 ### 환경변수와 필요한 키
 
@@ -76,9 +76,9 @@ embedding_model = get_embedding_model()
 ```mermaid
 flowchart TD
     I[입력 확인] --> R[공통 기술 조사 노드<br/>KIVI·InfiniGen RAG·웹]
-    R --> T[KIVI TRL 평가]
+    R --> T[두 기술 TRL 평가]
     R --> M[시장성 평가]
-    R --> S[이해관계자 TODO]
+    R --> S[이해관계자 평가]
     R --> D[도메인 평가]
     T --> G{{네 평가 합류}}
     M --> G
@@ -126,10 +126,11 @@ LANGSMITH_TRACING=false .venv/bin/python scripts/run_research.py evaluate --tech
 | State 키 | 생산자 | 주 소비자 |
 | --- | --- | --- |
 | `selected_technologies`, `domain_and_criteria`, `max_research_rounds` | `new_state`/입력 | 모든 조사·평가, 입력 확인·라우팅 |
-| `kivi_evidence` | KIVI 조사 | TRL·도메인 평가, 근거 확인, 보고서 |
-| `infinigen_evidence` | InfiniGen 조사 | 도메인 평가, 근거 확인, 보고서 |
+| `kivi_evidence` | KIVI 조사 | TRL·이해관계자·도메인 평가, 근거 확인, 보고서 |
+| `infinigen_evidence` | InfiniGen 조사 | TRL·이해관계자·도메인 평가, 근거 확인, 보고서 |
 | `market_evidence` | 시장성 조사 | 시장성 평가, 근거 확인, 보고서 |
-| `maturity_eval` | KIVI TRL 평가 | 근거 확인, 종합 |
+| `domain_evidence` | 도메인 평가 | 보고서의 실제 인용 근거 |
+| `maturity_eval` | 두 기술 TRL 평가 | 근거 확인, 종합 |
 | `market_eval` | 시장성 평가 | 근거 확인, 종합 |
 | `stakeholder_eval` | 이해관계자 평가 | 근거 확인, 종합 |
 | `domain_eval` | 도메인 평가 | 근거 확인, 종합 |

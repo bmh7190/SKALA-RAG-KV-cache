@@ -115,7 +115,71 @@ class SharedResearchTest(unittest.TestCase):
         self.assertEqual(len(result["evidence"]), 1)
         self.assertIn(":principle:", result["evidence"][0]["id"])
         maturity = evaluate({**state, "kivi_evidence": result})["maturity_eval"]["evaluations"][0]
-        self.assertEqual(maturity["score"], 2.0)
+        self.assertEqual(maturity["score"], 1.0)
+
+    def test_background_principle_does_not_raise_target_trl(self):
+        from kv_cache_eval.features.maturity.node import evaluate
+
+        sentence = "FlexGen uses heterogeneous memory to run inference."
+        doc = Document(id="flexgen", page_content=sentence, metadata={
+            "chunk_id": "flexgen", "source_id": "flexgen-icml-2023",
+            "source_document": "flexgen-icml-2023", "source_title": "FlexGen paper",
+            "source_url": None, "source_role": "system_background",
+            "subject_technology": "FlexGen", "page": 1,
+        })
+        claim = Claim(chunk_id="flexgen", source_id="flexgen-icml-2023", page=1,
+                      excerpt=sentence, claim=sentence)
+        item = ground_claim(claim, [doc], target="InfiniGen", category="principle")
+        self.assertIsNotNone(item)
+        state = new_state()
+        state["infinigen_evidence"] = {"evidence": [item], "notes": []}
+        infini = next(row for row in evaluate(state)["maturity_eval"]["evaluations"]
+                      if row["technology"] == "InfiniGen")
+        self.assertIsNone(infini["score"])
+        self.assertEqual(infini["evidence_ids"], [])
+
+    def test_independent_principle_does_not_become_direct_trl_evidence(self):
+        from kv_cache_eval.features.maturity.node import evaluate
+
+        sentence = "KVQuant compares KIVI on RULER."
+        doc = Document(id="kvquant", page_content=sentence, metadata={
+            "chunk_id": "kvquant", "source_id": "kvquant_validation",
+            "source_document": "kvquant_validation.pdf", "source_title": "KVQuant paper",
+            "source_url": None, "source_role": "independent_validation",
+            "subject_technology": "KVQuant", "page": 7,
+        })
+        claim = Claim(chunk_id="kvquant", source_id="kvquant_validation", page=7,
+                      excerpt=sentence, claim=sentence)
+        item = ground_claim(claim, [doc], target="KIVI", category="principle")
+        self.assertIsNotNone(item)
+        state = new_state()
+        state["kivi_evidence"] = {"evidence": [item], "notes": []}
+        kivi = next(row for row in evaluate(state)["maturity_eval"]["evaluations"]
+                    if row["technology"] == "KIVI")
+        self.assertIsNone(kivi["score"])
+        self.assertEqual(kivi["evidence_ids"], [])
+
+    def test_primary_principle_still_scores_for_both_technologies(self):
+        from kv_cache_eval.features.maturity.node import evaluate
+
+        state = new_state()
+        for technology, key in (("KIVI", "kivi_evidence"), ("InfiniGen", "infinigen_evidence")):
+            source = next(item for item in load_sources(technology)[0] if item.evidence_role == "primary")
+            sentence = f"{technology} has a core design principle."
+            doc = Document(id=technology, page_content=sentence, metadata={
+                "chunk_id": technology, "source_id": source.document_id,
+                "source_document": source.citation_document, "source_title": source.title,
+                "source_url": source.source_url, "source_role": "primary",
+                "subject_technology": technology, "page": 1,
+            })
+            claim = Claim(chunk_id=technology, source_id=source.document_id, page=1,
+                          excerpt=sentence, claim=sentence)
+            item = ground_claim(claim, [doc], target=technology, category="principle")
+            self.assertIsNotNone(item)
+            state[key] = {"evidence": [item], "notes": []}
+        result = evaluate(state)["maturity_eval"]["evaluations"]
+        self.assertEqual({row["technology"]: row["score"] for row in result},
+                         {"KIVI": 1.0, "InfiniGen": 1.0})
 
     def test_prior_evidence_never_crosses_technology(self):
         wrong = {"id": "wrong", "technology": "InfiniGen", "claim": "unrelated",

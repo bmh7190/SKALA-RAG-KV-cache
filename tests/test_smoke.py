@@ -94,13 +94,14 @@ class SmokeTest(unittest.TestCase):
 
     def test_default_function_node_reports_unimplemented(self):
         with self.assertRaises(NotImplementedError):
-            # 기술 조사와 시장성 평가는 실제 API를 사용하므로 배선 테스트에서만 대체한다.
+            # 기술 조사·시장성·이해관계자·도메인 평가는 실제 API를 사용할 수 있어 대체한다.
             build_graph({
                 "technical_research": lambda state: {
                     "kivi_evidence": {"evidence": [], "notes": []},
                     "infinigen_evidence": {"evidence": [], "notes": []},
                 },
                 "market": lambda state: {"market_eval": {"evaluations": [], "notes": []}},
+                "stakeholders": lambda state: {"stakeholder_eval": {"evaluations": [], "notes": []}},
                 "domain": lambda state: {"domain_eval": {"evaluations": [], "notes": []}},
             }).invoke(new_state())
 

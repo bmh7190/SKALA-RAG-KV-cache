@@ -4,18 +4,15 @@ import re
 
 from kv_cache_eval.common.schemas import Evidence, Evaluation, ResearchResult, Technology
 from kv_cache_eval.common.state import State, StateUpdate
+from kv_cache_eval.features.technical_research.ingest import load_sources
 
 
 def _evaluate_one_technology(
     technology: Technology, research: ResearchResult | None,
 ) -> tuple[Evaluation, list[str]]:
     """기술명과 무관하게 동일한 TRL 1~9 기준을 적용한다."""
-    independent_ids = set()
-    if research is not None:
-        independent_ids = {
-            note.split(": source_role=", 1)[0]
-            for note in research["notes"] if ": source_role=independent_validation" in note
-        }
+    sources, _ = load_sources(technology)
+    document_roles = {source.citation_document: source.evidence_role for source in sources}
     verified = [] if research is None else [
         item for item in research["evidence"]
         if item["technology"] == technology
@@ -28,17 +25,23 @@ def _evaluate_one_technology(
         parts = item["id"].split(":")
         return parts[-2].lower() if len(parts) >= 2 else ""
 
-    direct = [
-        item for item in verified
-        if item["id"] not in independent_ids and category(item) != "independent_evaluation"
-    ]
+    def role(item: Evidence) -> str:
+        reference = item["source"]
+        if reference["page"] is None and reference["url"]:
+            return "web_external"
+        return document_roles.get(reference["document"], "unknown")
+
+    # 질문 범주가 principle이어도 배경·독립 문서는 대상 기술의 직접 근거가 아니다.
+    direct = [item for item in verified if role(item) == "primary"]
+    public = [item for item in verified if role(item) in ("primary", "web_external")]
 
     def first(
         categories: set[str], terms: tuple[str, ...] = (), *,
         source: str | None = None, exclude_id: str | None = None,
+        items: list[Evidence] | None = None,
     ) -> Evidence | None:
         return next((
-            item for item in direct
+            item for item in (direct if items is None else items)
             if category(item) in categories
             and (source is None or (item["source"]["document"] or item["source"]["url"]) == source)
             and item["id"] != exclude_id
@@ -66,9 +69,9 @@ def _evaluate_one_technology(
         ("end-to-end", "wall-clock", "batch size", "peak memory", "latency", "system-level"),
         source=source, exclude_id=implementation["id"] if implementation else None,
     ) if source else None
-    independent = next((item for item in verified if item["id"] in independent_ids
-                        or category(item) == "independent_evaluation"), None)
-    public_code = first({"implementation", "code", "publication"}, ("source code", "repository", "github"))
+    independent = next((item for item in verified if role(item) == "independent_validation"), None)
+    public_code = first({"implementation", "code", "publication"},
+                        ("source code", "repository", "github"), items=public)
 
     score: float | None = None
     supporting = [item for item in (concept, method, experiment) if item]
@@ -94,7 +97,7 @@ def _evaluate_one_technology(
     )
     if score is not None and score >= 6:
         for level, categories, terms in operational:
-            item = first(categories, terms)
+            item = first(categories, terms, items=public)
             if item and not re.search(r"\b(?:not|no|without)\b|미확인|않", item["claim"], re.IGNORECASE):
                 score = float(level)
                 supporting.append(item)
