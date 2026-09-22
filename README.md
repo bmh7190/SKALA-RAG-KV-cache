@@ -5,7 +5,7 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 ## 현재 상태
 
 - **구현됨:** KIVI·InfiniGen 공통 PDF RAG/웹 조사, KIVI TRL 평가, 두 기술의 시장성·도메인 적합성 평가, 공유 State와 근거 공백 검사, 병렬 조사·평가 Graph 배선.
-- **TODO:** InfiniGen TRL·이해관계자 평가, 종합, 최종 보고서·PDF. 따라서 전체 Graph를 기본 노드만으로 끝까지 실행할 수 없습니다. `main.py`는 두 기술의 **조사 근거만** 순서대로 저장합니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
+- **TODO:** InfiniGen TRL·이해관계자 평가, 종합, 최종 보고서·PDF. `main.py`는 기존 전체 Graph를 실행하지만 미구현 노드에서는 중단될 수 있습니다. 출처 연결 외 주장 의미 검토도 남아 있습니다.
 - 두 기술의 로컬 검색 임베딩은 사용자 지정 `BAAI/bge-m3`를 사용합니다. 생성 모델은 `.env`의 `LLM_PROVIDER`와 `LLM_MODEL`에서 읽으며 저장소에서 모델명을 고정하지 않습니다.
 
 ## 설치와 실행
@@ -23,11 +23,11 @@ uv sync --locked --all-extras
 HF_HUB_OFFLINE=1 uv run --locked python -m unittest discover -s tests -v
 uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
 
-# main.py 맨 위 QUESTION을 편집한 뒤 기술 조사 실행
+# main.py 맨 위 QUESTION을 편집한 뒤 전체 Graph 실행
 .venv/bin/python main.py
 ```
 
-`main.py`는 KIVI와 InfiniGen을 순서대로 조사하고 `data/cache/runs/`에 실행마다 고유한 JSON 파일을 만듭니다. JSON에는 질문, 진행 상태, 각 기술의 조사 근거를 담은 State가 있습니다. 첫 조사 뒤 파일을 갱신하므로 다음 기술이 실패해도 첫 결과는 남습니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이 명령은 TRL·시장성·이해관계자·도메인 평가나 최종 보고서를 실행하지 않습니다.
+`main.py`는 하드코딩한 질문을 두 기술 조사 노드에 전달한 뒤 기존 전체 Graph를 호출하는 진입점입니다. 실제 실행에는 PDF·로컬 임베딩 모델과 설정된 OpenAI/Tavily API 접근이 필요합니다. 이해관계자·종합·보고서 노드가 아직 미구현이므로 현재는 그 단계에서 중단될 수 있습니다. 결과 저장과 PDF 생성은 해당 노드 구현 범위입니다.
 
 `pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
 
