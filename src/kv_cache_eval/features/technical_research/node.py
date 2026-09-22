@@ -35,7 +35,7 @@ def _experiment(text: str) -> ExperimentContext | None:
     if models:
         context["model"] = ", ".join(models[:4])
     workloads = list(dict.fromkeys(re.findall(
-        r"\b(?:GSM8K|LongBench|RULER|CoQA|TruthfulQA|Wikitext-2|passkey retrieval)\b",
+        r"\b(?:GSM8K|LongBench|RULER|CoQA|TruthfulQA|Wikitext-2|passkey retrieval|ShareGPT)\b",
         text, flags=re.IGNORECASE,
     )))
     if workloads:
@@ -65,6 +65,7 @@ def research_technology(state: State, technology: Technology) -> StateUpdate:
         ("experiment_conditions", "What group size and residual length are used in KIVI experiments?", r"group size G in Algorithm 1", "primary", 0, 0),
         ("experiment_conditions", "KIVI evaluation tasks CoQA TruthfulQA GSM8K LongBench normal and long context", r"adopt generation tasks from LM-Eval", "primary", 0, 0),
         ("experiment_conditions", "What GPU model baseline and workload are used for KIVI efficiency experiments?", r"single NVIDIA A100 GPU", "primary", 1, 0),
+        ("experiment_conditions", "How does KIVI use ShareGPT based real LLM service workloads for efficiency evaluation?", r"synthesize workloads based on ShareGPT", "primary", 1, 0),
         ("performance_results", "What peak memory reduction does KIVI report?", r"less peak memory", "primary", 0, 0),
         ("performance_results", "What throughput improvement and batch size does KIVI report against FP16?", r"larger throughput", "primary", 0, 0),
         ("model_quality", "What accuracy drop does KIVI report on GSM8K?", r"accuracy drop is only around", "primary", 0, 0),

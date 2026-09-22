@@ -29,6 +29,7 @@ def evaluate(state: State) -> StateUpdate:
     experiment = find(primary, "model_quality", "gsm8k")
     gpu = find(primary, "experiment_conditions", "a100", "gpu")
     throughput = find(primary, "performance_results", "throughput")
+    workload = find(primary, "experiment_conditions", "sharegpt")
     validation = find(independent, "independent_evaluation", "kivi", "ruler")
     code = next((item for item in primary if "source code is available" in item["claim"].lower()
                  or "github.com" in item["claim"].lower()
@@ -49,6 +50,8 @@ def evaluate(state: State) -> StateUpdate:
     elif concept:
         score = 2.0
 
+    if score == 6.0 and workload:
+        supporting.append(workload)
     evidence_ids = list(dict.fromkeys(item["id"] for item in supporting)) if score is not None else []
     rationale = None
     if score is not None:
@@ -85,9 +88,9 @@ def evaluate(state: State) -> StateUpdate:
         f"A 기술 개념: {'확인' if concept else '미확인'}",
         f"B 원논문 실험: {'확인' if experiment else '미확인'}",
         f"C GPU 시스템 평가: {'확인' if gpu and throughput else '미확인'}",
-        f"D 공개 코드: {'확인' if code else '미확인'} (상용화 판단과 별개)",
+        f"D 공개 코드: 저자 공개 코드 제공 명시는 {'Evidence에서' if code else '원논문 1쪽에서'} 확인; repository 현재 상태·재현성·유지 여부는 미확인",
         f"E 독립 후속 검증: {'확인' if validation else '미확인'} (실제 운영 근거와 별개)",
-        f"F 관련 LLM 추론 workload: {'확인' if gpu and throughput else '미확인'} (ShareGPT 세부 조건은 현재 Evidence에서 미확인; 실제 서비스 운영과 별개)",
+        f"F 관련 LLM 추론 workload: {'ShareGPT 기반 조건 확인' if workload else 'ShareGPT 기반 조건 미확인'} (실제 서비스 운영과 별개)",
         "G 기업 Pilot/PoC: 미확인 (단계 미달 판정 아님)",
         "H 제품·서비스 적용: 미확인 (단계 미달 판정 아님)",
         f"TRL 1~{int(score)}: 공개 근거로 뒷받침되는 수준" if score is not None else "TRL 1~6: 확인 근거 부족",
