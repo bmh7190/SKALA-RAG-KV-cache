@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
+from kv_cache_eval.common.config import load_environment
 from kv_cache_eval.common.state import State, StateUpdate
 
 
@@ -24,16 +25,18 @@ SYSTEM_PROMPT = """
 
 1. KIVI와 InfiniGen의 우열을 판정하거나 하나의 기술을 추천하지 않는다.
 2. 입력으로 제공된 평가 결과와 근거만 사용한다.
-3. 서로 다른 모델, 하드웨어, 데이터셋, 문맥 길이, 배치 크기에서 측정된
-   성능 수치를 동일 조건의 결과처럼 직접 비교하지 않는다.
+3. 서로 다른 모델, 하드웨어, 데이터셋, 문맥 길이, 배치 크기에서
+   측정된 성능 수치를 동일 조건의 결과처럼 직접 비교하지 않는다.
 4. 직접 확인된 사실과 기술 자료로부터 추론한 영향을 구분한다.
-5. 출처가 없는 주장이나 확인되지 않은 내용은 미해결 근거 공백에 기록한다.
-6. 기술 성숙도, 시장성, 이해관계자, 도메인 적용성 사이의 공통점과
+5. 출처가 없거나 확인되지 않은 내용은 미해결 근거 공백에 기록한다.
+6. 기술 성숙도, 시장성, 이해관계자, 도메인 적용성 사이의 공통점,
    차이점 및 상충 관계를 명시한다.
 7. 각 기술이 유리할 수 있는 적용 조건과 한계를 함께 작성한다.
-8. 두 기술의 상호 보완 가능성은 확정된 사실이 아닌 조건부 가능성으로 작성한다.
-9. 입력에 포함된 source_id가 있는 경우 해당 주장의 끝에 [source_id] 형식으로 표시한다.
-10. 입력에 없는 출처, 수치, 기업 사례, 도입 사례를 생성하지 않는다.
+8. 두 기술의 상호 보완 가능성은 확정된 사실이 아닌
+   조건부 가능성으로 작성한다.
+9. 입력에 source_id가 있는 경우 해당 주장의 끝에
+   [source_id] 형식으로 표시한다.
+10. 입력에 없는 출처, 수치, 기업 사례와 도입 사례를 생성하지 않는다.
 
 다음 형식으로 작성하라.
 
@@ -72,7 +75,7 @@ SYSTEM_PROMPT = """
 
 
 def _to_serializable(value: Any) -> Any:
-    """State 값을 JSON 직렬화 가능한 형태로 변환한다."""
+    """State 값을 JSON 직렬화가 가능한 형태로 변환한다."""
 
     if value is None:
         return None
@@ -99,22 +102,37 @@ def _to_serializable(value: Any) -> Any:
 
 
 def _get_llm() -> ChatOpenAI:
-    """환경변수에 설정된 모델로 종합 Agent용 LLM을 생성한다."""
+    """환경변수에 설정된 OpenAI 생성 LLM을 생성한다."""
 
-    model_name = (
-        os.getenv("OPENAI_MODEL")
-        or os.getenv("LLM_MODEL")
-        or "gpt-4o-mini"
-    )
+    load_environment()
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    model_name = os.getenv("LLM_MODEL", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    if provider != "openai":
+        raise ValueError(
+            "LLM_PROVIDER는 'openai'여야 합니다. "
+            f"현재 값: {provider or '미설정'}"
+        )
+
+    if not model_name:
+        raise ValueError(
+            "LLM_MODEL 환경변수가 설정되지 않았습니다."
+        )
+
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY 환경변수가 설정되지 않았습니다."
+        )
 
     return ChatOpenAI(
         model=model_name,
-        temperature=0,
     )
 
 
 def _get_response_text(response: Any) -> str:
-    """LLM 응답에서 문자열 본문을 추출한다."""
+    """LLM 응답 객체에서 문자열 본문을 추출한다."""
 
     content = getattr(response, "content", response)
 
@@ -127,10 +145,13 @@ def _get_response_text(response: Any) -> str:
         for item in content:
             if isinstance(item, str):
                 text_parts.append(item)
+
             elif isinstance(item, dict):
                 text = item.get("text")
+
                 if text:
                     text_parts.append(str(text))
+
             else:
                 text_parts.append(str(item))
 
@@ -147,12 +168,12 @@ def synthesize(state: State) -> StateUpdate:
         maturity_eval:
             KIVI와 InfiniGen의 기술 성숙도 및 TRL 평가 결과.
         market_eval:
-            시장 성장성, 상용화·채택, 생태계 평가 결과.
+            시장 성장성, 상용화·채택 및 생태계 평가 결과.
         stakeholder_eval:
-            운영자, 개발자, 이용자, 경쟁 진영,
+            운영자, 개발자, 이용자, 경쟁 기술 진영,
             투자·산업 관계자 관점의 평가 결과.
         domain_eval:
-            GPU 기반 클라우드 LLM 서비스 환경에서의 평가 결과.
+            GPU 기반 클라우드 LLM 서비스 환경의 평가 결과.
         evidence_gaps:
             출처가 없거나 확인되지 않은 주장.
 
@@ -185,7 +206,9 @@ def synthesize(state: State) -> StateUpdate:
     input_data = {
         "maturity_eval": _to_serializable(maturity_eval),
         "market_eval": _to_serializable(market_eval),
-        "stakeholder_eval": _to_serializable(stakeholder_eval),
+        "stakeholder_eval": _to_serializable(
+            stakeholder_eval
+        ),
         "domain_eval": _to_serializable(domain_eval),
         "evidence_gaps": _to_serializable(evidence_gaps),
         "missing_inputs": missing_inputs,
@@ -194,7 +217,7 @@ def synthesize(state: State) -> StateUpdate:
     user_prompt = f"""
 아래는 KIVI와 InfiniGen에 대한 관점별 평가 결과다.
 
-누락된 평가 결과가 있는 경우 해당 내용을 임의로 보완하지 말고
+누락된 평가 결과가 있으면 해당 내용을 임의로 보완하지 말고
 '미해결 근거 공백'에 명시하라.
 
 <관점별 평가 결과>
@@ -206,6 +229,7 @@ Trade-off, 적용 조건, 한계 및 근거 공백을 종합하라.
 """.strip()
 
     llm = _get_llm()
+
     response = llm.invoke(
         [
             {
@@ -222,7 +246,9 @@ Trade-off, 적용 조건, 한계 및 근거 공백을 종합하라.
     synthesis = _get_response_text(response)
 
     if not synthesis:
-        raise ValueError("종합 Agent가 빈 결과를 반환했습니다.")
+        raise ValueError(
+            "종합 Agent가 빈 결과를 반환했습니다."
+        )
 
     return {
         "synthesis": synthesis,

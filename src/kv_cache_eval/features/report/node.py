@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
+from kv_cache_eval.common.config import load_environment
 from kv_cache_eval.common.state import State, StateUpdate
 
 
@@ -24,13 +25,15 @@ KIVI와 InfiniGen의 기술 근거, 기술 성숙도, 시장성, 이해관계자
 4. 수치에는 가능한 경우 모델, 데이터셋, 하드웨어, 문맥 길이,
    배치 크기 등 확인된 실험 조건을 함께 작성한다.
 5. 직접 확인된 사실과 기술 자료로부터 추론한 영향을 구분한다.
-6. 입력에 source_id가 있으면 해당 주장의 끝에 [source_id] 형식으로 표시한다.
-7. 입력에 없는 출처, 수치, 기업 사례, 시장 규모 및 도입 사례를 생성하지 않는다.
+6. 입력에 source_id가 있으면 해당 주장의 끝에
+   [source_id] 형식으로 표시한다.
+7. 입력에 없는 출처, 수치, 기업 사례, 시장 규모 및
+   도입 사례를 생성하지 않는다.
 8. 근거가 부족하거나 확인되지 않은 내용은 한계점에 명시한다.
-9. 관점별 평가가 일치하는 부분뿐 아니라 상충하는 부분도 명확히 작성한다.
+9. 관점별 평가가 일치하는 부분뿐 아니라 상충하는 부분도 작성한다.
 10. REFERENCE에는 본문에서 실제로 인용한 source_id만 포함한다.
-11. SUMMARY는 보고서 소개가 아니라 전체 평가 결과의 핵심 요약으로 작성한다.
-12. SUMMARY는 전체 보고서의 1/2페이지를 넘지 않을 정도로 간결하게 작성한다.
+11. SUMMARY는 보고서 소개가 아니라 전체 평가 결과의 핵심 요약이다.
+12. SUMMARY는 전체 보고서의 1/2페이지를 넘지 않도록 간결하게 작성한다.
 13. 보고서는 한국어 Markdown 형식으로 작성한다.
 
 보고서 목차는 반드시 다음 순서를 따른다.
@@ -73,7 +76,7 @@ KIVI와 InfiniGen의 기술 근거, 기술 성숙도, 시장성, 이해관계자
 
 
 def _to_serializable(value: Any) -> Any:
-    """State 값을 JSON 직렬화 가능한 형태로 변환한다."""
+    """State 값을 JSON 직렬화가 가능한 형태로 변환한다."""
 
     if value is None:
         return None
@@ -100,22 +103,37 @@ def _to_serializable(value: Any) -> Any:
 
 
 def _get_llm() -> ChatOpenAI:
-    """환경변수에 설정된 모델로 보고서 Agent용 LLM을 생성한다."""
+    """환경변수에 설정된 OpenAI 생성 LLM을 생성한다."""
 
-    model_name = (
-        os.getenv("OPENAI_MODEL")
-        or os.getenv("LLM_MODEL")
-        or "gpt-4o-mini"
-    )
+    load_environment()
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    model_name = os.getenv("LLM_MODEL", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    if provider != "openai":
+        raise ValueError(
+            "LLM_PROVIDER는 'openai'여야 합니다. "
+            f"현재 값: {provider or '미설정'}"
+        )
+
+    if not model_name:
+        raise ValueError(
+            "LLM_MODEL 환경변수가 설정되지 않았습니다."
+        )
+
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY 환경변수가 설정되지 않았습니다."
+        )
 
     return ChatOpenAI(
         model=model_name,
-        temperature=0,
     )
 
 
 def _get_response_text(response: Any) -> str:
-    """LLM 응답에서 문자열 본문을 추출한다."""
+    """LLM 응답 객체에서 문자열 본문을 추출한다."""
 
     content = getattr(response, "content", response)
 
@@ -128,10 +146,13 @@ def _get_response_text(response: Any) -> str:
         for item in content:
             if isinstance(item, str):
                 text_parts.append(item)
+
             elif isinstance(item, dict):
                 text = item.get("text")
+
                 if text:
                     text_parts.append(str(text))
+
             else:
                 text_parts.append(str(item))
 
@@ -155,6 +176,7 @@ def _collect_source_ids(value: Any) -> set[str]:
 
     if hasattr(value, "model_dump"):
         value = value.model_dump()
+
     elif hasattr(value, "dict"):
         value = value.dict()
 
@@ -165,11 +187,15 @@ def _collect_source_ids(value: Any) -> set[str]:
             source_ids.add(str(source_id))
 
         for item in value.values():
-            source_ids.update(_collect_source_ids(item))
+            source_ids.update(
+                _collect_source_ids(item)
+            )
 
     elif isinstance(value, (list, tuple, set)):
         for item in value:
-            source_ids.update(_collect_source_ids(item))
+            source_ids.update(
+                _collect_source_ids(item)
+            )
 
     return source_ids
 
@@ -190,7 +216,7 @@ def write_report(state: State) -> StateUpdate:
         maturity_eval:
             기술 성숙도 및 TRL 평가.
         market_eval:
-            시장 성장성, 상용화·채택, 생태계 평가.
+            시장 성장성, 상용화·채택 및 생태계 평가.
         stakeholder_eval:
             이해관계자별 이점, 부담과 근거 수준.
         domain_eval:
@@ -241,7 +267,9 @@ def write_report(state: State) -> StateUpdate:
     required_results = {
         "maturity_eval": state.get("maturity_eval"),
         "market_eval": state.get("market_eval"),
-        "stakeholder_eval": state.get("stakeholder_eval"),
+        "stakeholder_eval": state.get(
+            "stakeholder_eval"
+        ),
         "domain_eval": state.get("domain_eval"),
         "synthesis": state.get("synthesis"),
     }
@@ -275,7 +303,7 @@ def write_report(state: State) -> StateUpdate:
 
 1. 누락된 평가 결과가 있으면 내용을 임의로 보완하지 않는다.
 2. 누락된 내용은 '6. 분석 한계 및 편향 방지'에 명시한다.
-3. 본문의 인용에는 위의 사용 가능한 source_id만 사용할 수 있다.
+3. 본문의 인용에는 위의 사용 가능한 source_id만 사용한다.
 4. source_id가 없는 근거는 출처가 확인되지 않은 것으로 표시한다.
 5. REFERENCE에는 본문에서 실제 사용한 source_id와 입력 자료에
    포함된 서지정보만 기재한다.
@@ -290,6 +318,7 @@ def write_report(state: State) -> StateUpdate:
 """.strip()
 
     llm = _get_llm()
+
     response = llm.invoke(
         [
             {
@@ -306,7 +335,9 @@ def write_report(state: State) -> StateUpdate:
     report = _get_response_text(response)
 
     if not report:
-        raise ValueError("보고서 Agent가 빈 결과를 반환했습니다.")
+        raise ValueError(
+            "보고서 Agent가 빈 결과를 반환했습니다."
+        )
 
     required_headings = [
         "# SUMMARY",
