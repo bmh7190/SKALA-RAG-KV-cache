@@ -1,0 +1,30 @@
+{
+  "collection_id": "kivi-rag-100p",
+  "page_budget": 100,
+  "documents": [
+    {
+      "document_id": "kivi_original",
+      "citation_document": "kivi_original.pdf",
+      "title": "KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache",
+      "source_url": "https://arxiv.org/abs/2402.02750v2",
+      "version": "arXiv v2 (version printed on provided PDF)",
+      "evidence_role": "primary",
+      "subject_technology": "KIVI",
+      "file": "kivi_original.pdf",
+      "page_count": 15,
+      "sha256": "df31ef32d71bfb280c533c5db8220cadf5ef42076bf45d82ba4c8da8e50ea5f4"
+    },
+    {
+      "document_id": "kvquant_validation",
+      "citation_document": "kvquant_validation.pdf",
+      "title": "KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization",
+      "source_url": null,
+      "version": "provided PDF; version not confirmed",
+      "evidence_role": "independent_validation",
+      "subject_technology": "KVQuant",
+      "file": "kvquant_validation.pdf",
+      "page_count": 34,
+      "sha256": "a128dbbcd6796d023880864140abd3b183a0b320832bfcd79b5308e54d2074d5"
+    }
+  ]
+}

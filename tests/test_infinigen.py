@@ -68,7 +68,7 @@ class InfiniGenTest(unittest.TestCase):
         )
 
         questions = questions_for_state(new_state(), target="NewTech")
-        self.assertEqual(len(questions), 8)
+        self.assertEqual(len(questions), 10)
         self.assertEqual([item.route for item in questions[-2:]], ["web", "both"])
         self.assertTrue(all("NewTech" in item.text for item in questions))
         text = " ".join(item.text for item in questions) + REVIEW_SYSTEM + EXTRACT_SYSTEM
@@ -142,13 +142,12 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_partial_state_update(self):
         from kv_cache_eval.common.state import new_state
-        from kv_cache_eval.features.technical_research.infinigen import node
+        from kv_cache_eval.features.technical_research import node
 
         result = {"evidence": [], "notes": ["fixture only"]}
         with patch.object(node, "make_runtime_llm", return_value=object()), \
-             patch.object(node, "ensure_index", return_value=(object(), {})), \
-             patch.object(node, "ModelReviewer") as reviewer, \
-             patch.object(node, "research_questions", return_value=result):
+             patch("kv_cache_eval.features.technical_research.workflow.ModelReviewer") as reviewer, \
+             patch("kv_cache_eval.features.technical_research.workflow.research_questions", return_value=result):
             reviewer.return_value.calls = 0
             output = node.research_infinigen(new_state())
         self.assertEqual(set(output), {"infinigen_evidence"})
@@ -160,7 +159,7 @@ class InfiniGenTest(unittest.TestCase):
             INDEX_FORMAT, RetrievalSettings, index_fingerprint, index_is_current,
         )
 
-        source = Source("id", "title", "https://example.org", "v1", "primary",
+        source = Source("id", "id", "title", "https://example.org", "v1", "primary",
                         "InfiniGen", "paper.pdf", 1, "abc")
         settings = RetrievalSettings("BAAI/bge-m3")
         fingerprint = index_fingerprint([source], settings)
@@ -173,7 +172,7 @@ class InfiniGenTest(unittest.TestCase):
             (path / "index.pkl").write_bytes(b"local cache")
             (path / "manifest.json").write_text(json.dumps({
                 "format": INDEX_FORMAT, "fingerprint": fingerprint,
-                "created_by": "kv-cache-eval:infinigen",
+                "created_by": "kv-cache-eval:technical-research",
                 "files": {"index.faiss": file_sha256(path / "index.faiss"),
                           "index.pkl": file_sha256(path / "index.pkl")},
             }))

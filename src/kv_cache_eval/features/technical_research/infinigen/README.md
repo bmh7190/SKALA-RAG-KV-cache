@@ -1,5 +1,7 @@
 # InfiniGen 기술 조사: 논문 RAG와 웹 보완
 
+공통 구현과 현재 실행 방법은 상위 [`README.md`](../README.md)에 있습니다. 이 폴더의 Python 파일은 기존 import 호환 경로이며, 아래 기록은 이전 InfiniGen 단독 검증에 관한 것입니다.
+
 선정 기술은 InfiniGen으로 고정되어 있습니다. `prompts.py`의 공통 질문은 목적에 따라 `rag`, `web`, `both` 중 한 경로를 선택합니다. 원리·실험·조건은 논문 RAG, 현재 공개 구현·지원·채택은 웹, 논문과 공개 구현의 연결은 둘 다 검색합니다. RAG 질문의 근거가 부족하면 최대 시도 횟수 안에서 다음 검색을 `both`로 넓힙니다. 이 선택은 **어디서 찾을지** 정할 뿐 사실을 증명하지 않습니다.
 
 `node.py`는 `research_infinigen(state)`에서 `infinigen_evidence`만 반환합니다. PDF 검색은 실제로 필요할 때 `retriever.py`의 로컬 BGE-M3/FAISS 색인을 로딩하므로 웹 전용 질문은 그 비용이 없습니다. `web.py`는 `TavilySearch`로 최대 3개 URL을 찾고 `TavilyExtract`가 실제 추출한 본문만 LangChain `Document`로 전달합니다. 검색 요약·답변은 근거로 쓰지 않으며, 웹 본문은 색인 PDF나 영구 RAG 코퍼스에 추가하지 않습니다. 웹 본문은 URL당 최대 6000자로 제한합니다.
