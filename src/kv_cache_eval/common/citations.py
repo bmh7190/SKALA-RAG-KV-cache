@@ -10,6 +10,20 @@ EVIDENCE_KEYS = ("kivi_evidence", "infinigen_evidence", "market_evidence", "doma
 _INLINE_CITATION = re.compile(r"\[([^\[\]\n]+)\]")
 
 
+def _same_evidence(first: Evidence, second: Evidence) -> bool:
+    """experiment의 선택 필드에서 생략과 null만 같은 값으로 본다."""
+    first_core = {key: value for key, value in first.items() if key != "experiment"}
+    second_core = {key: value for key, value in second.items() if key != "experiment"}
+    if first_core != second_core:
+        return False
+    first_experiment = first.get("experiment")
+    second_experiment = second.get("experiment")
+    if isinstance(first_experiment, dict) and isinstance(second_experiment, dict):
+        return ({key: value for key, value in first_experiment.items() if value is not None}
+                == {key: value for key, value in second_experiment.items() if value is not None})
+    return first_experiment == second_experiment
+
+
 def collect_verified_evidence(state: State) -> dict[str, Evidence]:
     """확인된 원본 근거를 모은다. 도메인 노드의 동일 ID 재사용은 허용한다."""
     by_id: dict[str, Evidence] = {}
@@ -24,9 +38,10 @@ def collect_verified_evidence(state: State) -> dict[str, Evidence]:
             if not evidence_id:
                 continue
             previous = by_id.get(evidence_id)
-            if previous is not None and previous != evidence:
+            if previous is not None and not _same_evidence(previous, evidence):
                 raise ValueError(f"서로 다른 근거가 같은 ID를 사용합니다: {evidence_id}")
-            by_id[evidence_id] = evidence
+            if previous is None:
+                by_id[evidence_id] = evidence
     return by_id
 
 

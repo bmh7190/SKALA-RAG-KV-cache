@@ -97,6 +97,8 @@ flowchart TD
 
 `check_evidence`는 결과 누락, 미확인 출처, 근거 ID 연결을 확인하는 **최소 구조 검사**입니다. 문서의 실제 신뢰성, 실험 조건의 비교 가능성, 주장 내용의 타당성 판정은 조사/평가 담당자가 추가해야 합니다. 빈 근거나 빈 평가는 통과하지 않습니다.
 
+도메인 평가 요청의 기본 입력 한도는 실제 재조사 State에서 32,000바이트가 평가·검토 여유분을 담지 못한 사례를 반영해 131,072바이트(128 KiB)입니다. 기술별 입력이 이 한도도 넘으면 평가를 미확인으로 남깁니다. 자세한 조건은 [`domain/README.md`](src/kv_cache_eval/features/domain/README.md)를 참조하세요.
+
 ## KIVI·InfiniGen 공통 기술 조사
 
 단일 `technical_research` Graph 노드가 선정된 KIVI와 InfiniGen을 순회하며 각각 `research_technology(state, technology)`를 호출합니다. 두 기술은 같은 질문·검색·검토·추출·제한된 재검색 흐름을 쓰고 결과는 기존 `kivi_evidence`·`infinigen_evidence` 키에 반환합니다. 상세 설계와 인용 규칙은 [`technical_research/README.md`](src/kv_cache_eval/features/technical_research/README.md)를 참조하세요.
