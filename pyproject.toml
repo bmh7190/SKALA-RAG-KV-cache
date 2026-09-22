@@ -7,8 +7,24 @@ name = "kv-cache-eval"
 version = "0.1.0"
 description = "KV Cache optimization technology evaluation workflow skeleton"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = ["langgraph>=1.0.1,<2"]
+
+[project.optional-dependencies]
+rag = [
+    "langchain>=1.0.2,<2",
+    "langchain-community>=0.4,<0.5",
+    "langchain-text-splitters>=1,<2",
+    "langchain-huggingface>=1,<2",
+    "sentence-transformers>=5.1.1,<6",
+    "faiss-cpu>=1.12,<2",
+    "pypdf>=6,<7",
+    "pdfplumber>=0.11.8,<1",
+]
+web = ["langchain-tavily>=0.2.12,<2"]
+report = ["reportlab>=4,<5"]
+llm-openai = ["langchain-openai>=1,<2"]
+llm-ollama = ["langchain-ollama>=1,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kv_cache_eval"]

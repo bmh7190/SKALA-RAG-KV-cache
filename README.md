@@ -10,15 +10,31 @@ GPU 기반 클라우드 LLM 서비스에 KIVI(KV Cache 양자화)와 InfiniGen(C
 
 ## 설치와 실행
 
-Python 3.11 이상과 `uv` 사용:
+Python **3.11**을 사용합니다(`.python-version`, `pyproject.toml`). 현재 잠금 파일과 프로젝트 가상환경 설치는 macOS ARM64의 Python 3.11.15에서 검증했습니다. `uv`가 없으면 [공식 설치 안내](https://docs.astral.sh/uv/getting-started/installation/)를 따라 설치하세요. Python 3.11이 없으면 `uv python install 3.11`로 준비할 수 있습니다([공식 Python 안내](https://docs.astral.sh/uv/concepts/python-versions/)).
 
 ```bash
-uv sync
-uv run python -m unittest discover -s tests -v
-uv run python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
+# 현재 공통 State/Graph 작업에 필요한 기본 설치
+uv sync --locked
+
+# 팀 전체 개발 도구를 한 번에 설치: RAG, 웹 검색, 보고서, 선택형 LLM 연동
+uv sync --locked --all-extras
+
+# 오프라인 smoke test 및 그래프 컴파일 확인
+uv run --locked python -m unittest discover -s tests -v
+uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(build_graph())'
 ```
 
-그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. `.env.example`의 빈 `LLM_PROVIDER`, `LLM_MODEL`은 후속 구현 시 결정합니다. 현재 테스트는 키·원문·네트워크가 필요 없습니다.
+`pyproject.toml`이 직접 의존성의 단일 기준이고 `uv.lock`이 해결된 버전을 고정합니다. `--locked`는 두 파일이 맞지 않으면 설치를 중단합니다([uv 공식 문서](https://docs.astral.sh/uv/concepts/projects/sync/)). 필요한 기능만 설치하려면 `uv sync --locked --extra rag`처럼 선택할 수 있습니다.
+
+| 설치 범위 | 패키지와 용도 |
+| --- | --- |
+| 기본 | `langgraph`: 현재 구현된 StateGraph 배선과 테스트에 실제 사용 |
+| `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 후속 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
+| `web` | `langchain-tavily`: 후속 웹 검색용 |
+| `report` | `reportlab`: 후속 PDF 생성용 |
+| `llm-openai`, `llm-ollama` | 실습과 유사한 LLM 연결을 선택할 때 사용할 클라이언트. 제공자나 모델의 기본값을 정하지 않음 |
+
+전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. `.env.example`의 빈 `LLM_PROVIDER`, `LLM_MODEL`은 후속 구현 시 결정합니다. smoke test는 키·원문·네트워크가 필요 없습니다.
 
 ## 그래프
 
@@ -89,4 +105,4 @@ flowchart TD
 
 ## 실습 참고
 
-읽기 전용 참고 경로: `/Users/bmh7190/skala/skala-rag/langgraph/`의 `00-Basic/02-State.ipynb`, `00-Basic/03-Graph.ipynb`, `01-Features/21-Branching.ipynb`, `10-Agent/11-Multi-ReportAgent.ipynb`, `20-RAG/13-AgenticRAG.ipynb`와 `20-RAG/rag/{base,pdf,utils}.py`. 이 프로젝트는 실습의 함수형 `TypedDict`/`StateGraph` 패턴만 가져오며, 실습 노트북·출력·프롬프트·API 키를 복사하지 않습니다. 실습의 큰 1.x 의존성 목록 대신 현재 뼈대에 필요한 `langgraph`만 필수로 선언했습니다.
+읽기 전용 참고 경로: `/Users/bmh7190/skala/skala-rag/langgraph/`의 `00-Basic/02-State.ipynb`, `00-Basic/03-Graph.ipynb`, `01-Features/21-Branching.ipynb`, `10-Agent/11-Multi-ReportAgent.ipynb`, `20-RAG/13-AgenticRAG.ipynb`와 `20-RAG/rag/{base,pdf,utils}.py`. 이 프로젝트는 실습의 함수형 `TypedDict`/`StateGraph` 패턴만 가져오며, 실습 노트북·출력·프롬프트·API 키를 복사하지 않습니다. 실습의 큰 1.x 의존성 목록 대신 현재 뼈대에 필요한 `langgraph`만 필수로 선언하고 후속 개발 패키지는 옵션으로 분리했습니다.
