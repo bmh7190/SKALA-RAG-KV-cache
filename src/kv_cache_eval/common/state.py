@@ -25,6 +25,7 @@ class State(TypedDict):
     # 중간 결과: None=아직 생산되지 않음. 빈 결과/낮은 평가와 구분한다.
     kivi_evidence: ResearchResult | None
     infinigen_evidence: ResearchResult | None
+    market_evidence: ResearchResult | None
     maturity_eval: EvaluationResult | None
     market_eval: EvaluationResult | None
     stakeholder_eval: EvaluationResult | None
@@ -38,6 +39,7 @@ class State(TypedDict):
 class StateUpdate(TypedDict, total=False):
     kivi_evidence: ResearchResult | None
     infinigen_evidence: ResearchResult | None
+    market_evidence: ResearchResult | None
     maturity_eval: EvaluationResult | None
     market_eval: EvaluationResult | None
     stakeholder_eval: EvaluationResult | None
@@ -61,6 +63,7 @@ def new_state(max_research_rounds: int = 2) -> State:
         "max_research_rounds": max_research_rounds,
         "kivi_evidence": None,
         "infinigen_evidence": None,
+        "market_evidence": None,
         "maturity_eval": None,
         "market_eval": None,
         "stakeholder_eval": None,

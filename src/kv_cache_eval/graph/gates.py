@@ -42,6 +42,21 @@ def check_evidence(state: State) -> StateUpdate:
             else:
                 known_ids[technology].add(evidence["id"])
 
+    market_result = state["market_evidence"]
+    if market_result is not None:
+        for evidence in market_result["evidence"]:
+            technology = evidence["technology"]
+            source = evidence["source"]
+            if evidence["id"] in all_ids:
+                gaps.append({"technology": technology, "criterion": "시장성", "reason": f"중복 근거 ID: {evidence['id']}"})
+            all_ids.add(evidence["id"])
+            if (evidence["verification_status"] != "source_checked"
+                    or not evidence["claim"].strip()
+                    or not (source["document"].strip() or source["url"])):
+                gaps.append({"technology": technology, "criterion": "시장성", "reason": f"근거 {evidence['id']}의 출처 확인 필요"})
+            else:
+                known_ids[technology].add(evidence["id"])
+
     for criterion, key in (
         ("기술 성숙도(TRL)", "maturity_eval"),
         ("시장성", "market_eval"),
