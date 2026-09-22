@@ -29,13 +29,13 @@ def number(value):
 def ambiguous_numeric_text(text):
     """범위·한계·근삿값과 모호한 하이픈을 확정 측정값에서 제외한다."""
     text = _MODEL_LABEL.sub("MODEL", unicodedata.normalize("NFKC", text))
-    if re.search(r"(?:최대|최소|대략|약|적어도)\s*[+-]?\d|\b(?:up to|at least|at most|less than|more than|greater than|no more than|no less than|about|around|approximately|approx\.?)\s*[+-]?\d", text, re.I):
+    if re.search(r"(?:최대|최소|대략|약|적어도)\s*[+-]?\d|\b(?:up to|at least|at most|less than|more than|greater than|no more than|no less than|about|around|approximately|approx\.?)\s*(?:(?:a|an)\s+)?[+-]?\d", text, re.I):
         return True
     if re.search(r"[<>≤≥≈≃±~∼]\s*[+-]?\d|\d[\d.,]*\s*(?:%|퍼센트)?\s*(?:이상|이하|미만|초과|내외|정도)", text):
         return True
     # 지수의 음수 부호는 구간 구분자로 읽지 않는다.
     text = re.sub(r"(?<=\d)[eE][+-]?\d+", "", text)
-    if re.search(r"\d[\d.,]*\s*(?:[A-Za-z/%]+)?\s*(?:[-−–—~∼]|\bto\b|부터)\s*[+-]?\d", text, re.I):
+    if re.search(r"\d[\d.,]*\s*(?:[A-Za-z/%×]+)?\s*(?:[-−–—~∼]|\bto\b|부터)\s*[+-]?\d", text, re.I):
         return True
     # ASCII 하이픈 뒤 공백이나 앞의 단어는 문장 구분과 부호를 구별할 수 없다.
     if re.search(r"-\s+\d|[–—]\s*\d|(?<![eE])[A-Za-z가-힣][+-]\d", text):
