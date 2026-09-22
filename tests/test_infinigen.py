@@ -29,7 +29,7 @@ class InfiniGenTest(unittest.TestCase):
         })
 
     def test_grounding_rejects_wrong_source_page_excerpt_and_background_attribution(self):
-        from kv_cache_eval.features.technical_research.infinigen.workflow import Claim, ground_claim
+        from kv_cache_eval.features.technical_research.workflow import Claim, ground_claim
 
         hit = self.hit()
         valid = Claim(chunk_id=hit.metadata["chunk_id"], source_id=hit.metadata["source_id"], page=6,
@@ -47,7 +47,7 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_experiment_context_requires_same_source_chunk(self):
         from langchain_core.documents import Document
-        from kv_cache_eval.features.technical_research.infinigen.workflow import Claim, ground_claim
+        from kv_cache_eval.features.technical_research.workflow import Claim, ground_claim
 
         text = "OPT-6.7B long sequence decoding is compared with FlexGen."
         hit = Document(id="experiment-chunk", page_content=text, metadata={
@@ -63,7 +63,7 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_initial_questions_use_only_target_and_common_goals(self):
         from kv_cache_eval.common.state import new_state
-        from kv_cache_eval.features.technical_research.infinigen.prompts import (
+        from kv_cache_eval.features.technical_research.prompts import (
             EXTRACT_SYSTEM, REVIEW_SYSTEM, questions_for_state,
         )
 
@@ -77,7 +77,7 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_requery_preserves_goal_and_uses_only_observed_terms(self):
         from langchain_core.documents import Document
-        from kv_cache_eval.features.technical_research.infinigen.workflow import Review, build_question_graph
+        from kv_cache_eval.features.technical_research.workflow import Review, build_question_graph
 
         passage = "The observed transfer pattern reduces resource use."
         hit = Document(id="search-chunk", page_content=passage, metadata={
@@ -105,7 +105,7 @@ class InfiniGenTest(unittest.TestCase):
         self.assertEqual(routes, ["rag", "both"])
 
     def test_retry_is_bounded_and_unresolved(self):
-        from kv_cache_eval.features.technical_research.infinigen.workflow import build_question_graph
+        from kv_cache_eval.features.technical_research.workflow import build_question_graph
 
         queries = []
         def search(query, top_k, route):
@@ -122,8 +122,8 @@ class InfiniGenTest(unittest.TestCase):
         self.assertTrue(any("미확인" in note for note in result["notes"]))
 
     def test_call_budget_records_current_and_remaining_questions(self):
-        from kv_cache_eval.features.technical_research.infinigen.prompts import ResearchQuestion
-        from kv_cache_eval.features.technical_research.infinigen.workflow import CallBudgetExhausted, research_questions
+        from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
+        from kv_cache_eval.features.technical_research.workflow import CallBudgetExhausted, research_questions
 
         class FakeRetriever:
             def search(self, *_):
@@ -154,8 +154,8 @@ class InfiniGenTest(unittest.TestCase):
         self.assertEqual(output["infinigen_evidence"]["evidence"], [])
 
     def test_fingerprint_includes_citation_metadata_and_checksum(self):
-        from kv_cache_eval.features.technical_research.infinigen.ingest import Source, file_sha256
-        from kv_cache_eval.features.technical_research.infinigen.retriever import (
+        from kv_cache_eval.features.technical_research.ingest import Source, file_sha256
+        from kv_cache_eval.features.technical_research.retriever import (
             INDEX_FORMAT, RetrievalSettings, index_fingerprint, index_is_current,
         )
 
@@ -181,7 +181,7 @@ class InfiniGenTest(unittest.TestCase):
             self.assertFalse(index_is_current(path, fingerprint))
 
     def test_fixed_fixture_and_source_pages(self):
-        from kv_cache_eval.features.technical_research.infinigen.ingest import (
+        from kv_cache_eval.features.technical_research.ingest import (
             DEFAULT_DOCUMENT_DIR, load_sources, validate_sources,
         )
 
@@ -201,7 +201,7 @@ class InfiniGenTest(unittest.TestCase):
             self.assertEqual(validate_sources(sources, DEFAULT_DOCUMENT_DIR, budget), 91)
 
     def test_web_uses_extracted_body_and_tool_url_only(self):
-        from kv_cache_eval.features.technical_research.infinigen.web import search_web
+        from kv_cache_eval.features.technical_research.web import search_web
 
         with patch.dict(os.environ, {"TAVILY_API_KEY": "test-only"}), \
              patch("langchain_tavily.TavilySearch") as search, \
@@ -224,7 +224,7 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_web_grounding_requires_null_page_url_and_excerpt(self):
         from langchain_core.documents import Document
-        from kv_cache_eval.features.technical_research.infinigen.workflow import Claim, ground_claim
+        from kv_cache_eval.features.technical_research.workflow import Claim, ground_claim
 
         doc = Document(id="web-one", page_content="The project page lists a public implementation.", metadata={
             "chunk_id": "web-one", "source_id": "web-id", "source_title": "Project page",
@@ -244,7 +244,7 @@ class InfiniGenTest(unittest.TestCase):
         self.assertIsNone(ground_claim(claim, [bad_url], target="InfiniGen"))
 
     def test_web_tool_failures_are_notes_not_absence_claims(self):
-        from kv_cache_eval.features.technical_research.infinigen.web import search_web
+        from kv_cache_eval.features.technical_research.web import search_web
 
         with patch.dict(os.environ, {"TAVILY_API_KEY": "test-only"}), \
              patch("langchain_tavily.TavilySearch") as search, \
@@ -266,9 +266,9 @@ class InfiniGenTest(unittest.TestCase):
             self.assertFalse(any("private extraction details" in note for note in notes))
 
     def test_web_only_skips_rag_and_missing_key_is_unresolved(self):
-        from kv_cache_eval.features.technical_research.infinigen.prompts import ResearchQuestion
-        from kv_cache_eval.features.technical_research.infinigen.web import search_web
-        from kv_cache_eval.features.technical_research.infinigen.workflow import research_questions
+        from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
+        from kv_cache_eval.features.technical_research.web import search_web
+        from kv_cache_eval.features.technical_research.workflow import research_questions
 
         calls = []
         class Reviewer:
@@ -290,8 +290,8 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_web_only_extracts_attributed_source_checked_evidence(self):
         from langchain_core.documents import Document
-        from kv_cache_eval.features.technical_research.infinigen.prompts import ResearchQuestion
-        from kv_cache_eval.features.technical_research.infinigen.workflow import (
+        from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
+        from kv_cache_eval.features.technical_research.workflow import (
             Claim, Extraction, Review, research_questions,
         )
 
@@ -317,8 +317,8 @@ class InfiniGenTest(unittest.TestCase):
         self.assertEqual(result["evidence"][0]["verification_status"], "source_checked")
 
     def test_both_keeps_pdf_evidence_on_web_failure(self):
-        from kv_cache_eval.features.technical_research.infinigen.prompts import ResearchQuestion
-        from kv_cache_eval.features.technical_research.infinigen.workflow import (
+        from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
+        from kv_cache_eval.features.technical_research.workflow import (
             Claim, Extraction, Review, research_questions,
         )
 
@@ -339,8 +339,8 @@ class InfiniGenTest(unittest.TestCase):
 
     def test_both_can_keep_pdf_and_web_evidence(self):
         from langchain_core.documents import Document
-        from kv_cache_eval.features.technical_research.infinigen.prompts import ResearchQuestion
-        from kv_cache_eval.features.technical_research.infinigen.workflow import (
+        from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
+        from kv_cache_eval.features.technical_research.workflow import (
             Claim, Extraction, Review, research_questions,
         )
 

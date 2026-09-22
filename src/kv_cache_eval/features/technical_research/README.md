@@ -1,6 +1,6 @@
 # KIVI·InfiniGen 공통 기술 조사
 
-`node.py`의 `research_technology(state, technology)`가 동일한 질문, RAG/Tavily 검색, 본문 검토, 구조화 추출, 제한된 재검색을 실행합니다. `research_kivi`와 `research_infinigen`은 각각 `kivi_evidence`와 `infinigen_evidence`만 State에 반환합니다. 기존 `infinigen/` 모듈 경로는 이전 import를 위한 얇은 연결 파일입니다.
+`node.py`의 `research_technology(state, technology)`가 동일한 질문, RAG/Tavily 검색, 본문 검토, 구조화 추출, 제한된 재검색을 실행합니다. `research_kivi`와 `research_infinigen`은 각각 `kivi_evidence`와 `infinigen_evidence`만 State에 반환합니다.
 
 ## 원문과 인덱스
 
@@ -25,3 +25,5 @@ LANGSMITH_TRACING=false .venv/bin/python scripts/run_research.py research --tech
 ```
 
 임베딩 모델이 이미 캐시된 환경에서만 명령 앞에 `HF_HUB_OFFLINE=1`을 붙여 오프라인으로 실행할 수 있습니다. `research`는 `.env` 또는 셸의 `LLM_PROVIDER`, `LLM_MODEL`, API 키를 사용합니다. 현재 생성 제공자는 OpenAI입니다. `--output-name`은 각 기술의 `data/cache/<technology>/` 안에서 기존 결과와 겹치지 않게 지정합니다. InfiniGen 전용 기존 고정 질문집 평가는 `evaluate --technology InfiniGen`으로 계속 실행합니다.
+
+이전 InfiniGen 웹 경로 제한 실행은 Tavily 검색과 2개 URL의 본문 추출까지 확인했지만, `public_status` 질문의 공개 구현·지원·채택은 충분히 확인하지 못해 미확인으로 남겼습니다. 원시 기록은 `data/cache/infinigen/research_result_web_live*.json`에 보존되어 있습니다. 이는 채택 사례가 없다는 결론이 아닙니다.
