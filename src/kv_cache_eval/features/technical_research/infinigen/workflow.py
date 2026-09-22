@@ -103,9 +103,10 @@ def ground_claim(claim: Claim, hits: list[SearchHit]) -> Evidence | None:
             return None
     stable = f"{chunk.source_id}:{chunk.page}:{excerpt}".encode("utf-8")
     evidence_id = "infinigen-" + hashlib.sha256(stable).hexdigest()[:20]
-    context = {key: value for key, value in {
+    passage = _normalized(chunk.text).casefold()
+    context = {key: _normalized(value) for key, value in {
         "model": claim.model, "workload": claim.workload, "baseline": claim.baseline,
-    }.items() if value}
+    }.items() if value and _normalized(value).casefold() in passage}
     return {
         "id": evidence_id, "technology": "InfiniGen", "claim": claim.claim.strip(),
         "excerpt": excerpt,

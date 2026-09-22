@@ -42,6 +42,20 @@ class InfiniGenTest(unittest.TestCase):
         wrong = valid.model_copy(update={"source_id": background.chunk.source_id})
         self.assertIsNone(ground_claim(wrong, [background]))
 
+    def test_experiment_context_requires_same_source_chunk(self):
+        from kv_cache_eval.features.technical_research.infinigen.ingest import Chunk
+        from kv_cache_eval.features.technical_research.infinigen.retriever import SearchHit
+        from kv_cache_eval.features.technical_research.infinigen.workflow import Claim, ground_claim
+
+        text = "OPT-6.7B long sequence decoding is compared with FlexGen."
+        hit = SearchHit(Chunk("experiment-chunk", text, "infinigen-arxiv-v1", "Paper",
+                              "https://example.org/paper.pdf", "primary", "InfiniGen", 9, 0, len(text)), 0.8)
+        claim = Claim(chunk_id="experiment-chunk", source_id="infinigen-arxiv-v1", page=9,
+                      excerpt="long sequence decoding", claim="The paper compares long sequence decoding.",
+                      model="OPT-6.7B", workload="GPU 기반 클라우드 LLM 서비스", baseline="FlexGen")
+        evidence = ground_claim(claim, [hit])
+        self.assertEqual(evidence["experiment"], {"model": "OPT-6.7B", "baseline": "FlexGen"})
+
     def test_retry_is_bounded_and_unresolved(self):
         from kv_cache_eval.features.technical_research.infinigen.workflow import build_question_graph
 
