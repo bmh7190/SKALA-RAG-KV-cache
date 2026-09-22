@@ -16,7 +16,7 @@ Python **3.11**을 사용합니다(`.python-version`, `pyproject.toml`). 현재 
 # 현재 공통 State/Graph 작업에 필요한 기본 설치
 uv sync --locked
 
-# 팀 전체 개발 도구를 한 번에 설치: RAG, 웹 검색, 보고서, 선택형 LLM 연동
+# 팀 전체 개발 도구를 한 번에 설치: RAG, 웹 검색, 보고서, 선택형 OpenAI 연동
 uv sync --locked --all-extras
 
 # 오프라인 smoke test 및 그래프 컴파일 확인
@@ -32,7 +32,7 @@ uv run --locked python -c 'from kv_cache_eval.graph import build_graph; print(bu
 | `rag` | `langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-huggingface`, `sentence-transformers`, `faiss-cpu`, `pypdf`, `pdfplumber`: 후속 PDF 로딩·분할·오픈소스 임베딩·로컬 검색용 |
 | `web` | `langchain-tavily`: 후속 웹 검색용 |
 | `report` | `reportlab`: 후속 PDF 생성용 |
-| `llm-openai`, `llm-ollama` | 실습과 유사한 LLM 연결을 선택할 때 사용할 클라이언트. 제공자나 모델의 기본값을 정하지 않음 |
+| `llm-openai` | OpenAI를 선택할 때 사용할 클라이언트. 제공자나 모델의 기본값을 정하지 않음 |
 
 전체 옵션 설치는 패키지만 준비합니다. 모델 가중치 다운로드, 유료 API 호출, 문서 인덱싱은 수행하지 않습니다. 그래프 **컴파일**은 가능하지만 기본 노드로 호출하면 첫 조사 노드에서 의도적으로 중단됩니다. smoke test는 키·원문·네트워크가 필요 없습니다.
 
@@ -49,7 +49,6 @@ cp .env.example .env
 | `EMBEDDING_MODEL` | 사용자 지정 `BAAI/bge-m3`. 공개 모델을 로컬로 사용할 계획이며 별도 유료 임베딩 API 키나 벡터 DB 키는 필요 없음 |
 | `OPENAI_API_KEY` | OpenAI를 생성 LLM으로 선택하고 실제 호출할 때만 필요 |
 | `TAVILY_API_KEY` | Tavily 웹 검색을 구현하고 호출할 때만 필요 |
-| `OLLAMA_HOST` | Ollama 서버 주소를 기본값과 다르게 쓸 때만 필요. 로컬 Ollama에는 일반적으로 API 키가 없지만 실행 중인 서버와 선택한 모델이 필요 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | 추적은 기본 `false`. 사용하기로 선택한 경우에만 `true`와 키·프로젝트 설정 |
 
 `BAAI/bge-m3`는 [공개 모델 카드](https://huggingface.co/BAAI/bge-m3)의 일반 로컬 다운로드에 `HF_TOKEN`이 필수가 아니므로 예시에 넣지 않았습니다. 현재 RAG 의존성은 `sentence-transformers`/`HuggingFaceEmbeddings`와 로컬 FAISS의 **dense 벡터 검색**을 준비합니다. 모델의 sparse·multi-vector 기능을 자동으로 쓰지는 않습니다. 모델명 지정이 검색 품질 검증을 뜻하지는 않습니다.
@@ -63,7 +62,7 @@ load_environment()  # 현재 작업 디렉터리의 .env; 다른 위치라면 �
 embedding_model = get_embedding_model()
 ```
 
-`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `OLLAMA_HOST`는 설치된 Ollama Python 클라이언트가 읽는 변수이며, 별도의 `OLLAMA_BASE_URL` 변수를 자동 인식하는 것으로 가정하지 않습니다. `.env`는 Git에서 무시됩니다. 실제 API 호출은 각 기능 노드 구현 후에만 일어납니다.
+`load_environment()`는 이미 셸에 설정된 값을 덮어쓰지 않습니다. 셸 값과 `.env` 값이 다르면 셸 값이 우선하므로 실행 환경을 확인하세요. `.env`는 Git에서 무시됩니다. 실제 API 호출은 각 기능 노드 구현 후에만 일어납니다.
 
 ## 그래프
 

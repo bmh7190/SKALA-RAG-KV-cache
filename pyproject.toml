@@ -27,7 +27,6 @@ rag = [
 web = ["langchain-tavily>=0.2.12,<2"]
 report = ["reportlab>=4,<5"]
 llm-openai = ["langchain-openai>=1,<2"]
-llm-ollama = ["langchain-ollama>=1,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kv_cache_eval"]
