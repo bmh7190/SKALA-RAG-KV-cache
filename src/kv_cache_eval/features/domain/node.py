@@ -74,7 +74,7 @@ def _finish(rows, notes):
 
 
 def _messages(system, payload):
-    return [("system", system), ("human", json.dumps(payload, ensure_ascii=False, allow_nan=False))]
+    return [("system", system), ("human", json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")))]
 
 
 def _size(messages):
@@ -343,9 +343,19 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
 
 
 def _payload(domain, technologies, by_id, research_notes):
+    # 조사 노드가 claim과 excerpt에 같은 원문을 넣는 경우 한 번만 전송한다.
+    # 서로 다른 발췌와 제약사항은 유지하고 입력 State는 변경하지 않는다.
+    evidence = []
+    for item in by_id.values():
+        if item["technology"] not in technologies:
+            continue
+        entry = dict(item)
+        if entry.get("excerpt") == entry["claim"]:
+            entry.pop("excerpt")
+        evidence.append(entry)
     return {"domain": domain, "technologies": list(technologies), "rubric": DOMAIN_RUBRIC,
             "research_notes": {tech: research_notes[tech] for tech in technologies},
-            "evidence": [item for item in by_id.values() if item["technology"] in technologies]}
+            "evidence": evidence}
 
 
 def _fits(payload, limit):

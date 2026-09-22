@@ -10,6 +10,13 @@ from kv_cache_eval.features.domain.rubric import calculate_score, score_change
 NUMBER = r"(?<![\d.,])[+-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?"
 
 
+# 연구 결과에 자주 포함되는 모델 식별자의 하이픈은 수치 부호가 아니다.
+_MODEL_LABEL = re.compile(
+    r"\b(?:llama|falcon|mistral|qwen|gpt|opt|bloom|gemma)(?:[-_][A-Za-z0-9.]+)+\b",
+    re.I,
+)
+
+
 def number(value):
     if type(value) not in (int, float):
         raise ValueError("숫자 형식 필요")
@@ -21,7 +28,7 @@ def number(value):
 
 def ambiguous_numeric_text(text):
     """범위·한계·근삿값과 모호한 하이픈을 확정 측정값에서 제외한다."""
-    text = unicodedata.normalize("NFKC", text)
+    text = _MODEL_LABEL.sub("MODEL", unicodedata.normalize("NFKC", text))
     if re.search(r"(?:최대|최소|대략|약|적어도)\s*[+-]?\d|\b(?:up to|at least|at most|less than|more than|greater than|no more than|no less than|about|around|approximately|approx\.?)\s*[+-]?\d", text, re.I):
         return True
     if re.search(r"[<>≤≥≈≃±~∼]\s*[+-]?\d|\d[\d.,]*\s*(?:%|퍼센트)?\s*(?:이상|이하|미만|초과|내외|정도)", text):
@@ -42,7 +49,7 @@ def quoted_numbers(quote, *, percent=False):
     # 지원하지 않는 표기를 일부 숫자로 잘라 채택하지 않는다.
     if any(char in quote for char in "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻"):
         raise ValueError("위첨자 수치는 명시적인 지수 표기로 제공해야 합니다")
-    normalized = unicodedata.normalize("NFKC", quote).replace("−", "-")
+    normalized = _MODEL_LABEL.sub("MODEL", unicodedata.normalize("NFKC", quote)).replace("−", "-")
     if re.search(r"\d\s+\d", normalized):
         raise ValueError("공백으로 나뉜 수치는 해석을 확정할 수 없습니다")
     normalized = re.sub(r"([+-])\s+(?=\d)", r"\1", normalized)
