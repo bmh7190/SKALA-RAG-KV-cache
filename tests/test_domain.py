@@ -1,119 +1,117 @@
-"""도메인 평가 노드 단위 테스트.
-
-실제 LLM을 호출하지 않는다: evaluate()에 llm_call을 주입해 langchain-openai 설치나
-API 키 없이도(오프라인 smoke test와 동일한 기조) 노드 로직만 검증한다.
-"""
+"""도메인 평가의 현재 State 계약을 외부 API 없이 검증한다."""
 
 import unittest
+from unittest.mock import patch
 
 from kv_cache_eval.common.state import new_state
-from kv_cache_eval.features.domain.criteria import DOMAIN_CRITERIA
-from kv_cache_eval.features.domain.node import (
-    _CriterionAssessment,
-    _DomainAssessmentBatch,
-    evaluate,
-)
+from kv_cache_eval.features.domain.node import evaluate
+from kv_cache_eval.features.domain.prompt import OUTPUT_SCHEMA, VERIFY_SCHEMA
+from kv_cache_eval.features.domain.rubric import DOMAIN_RUBRIC
 
 
-def _make_evidence(id_, technology, claim, verification_status="source_checked"):
+def evidence(id_, technology, claim):
     return {
-        "id": id_,
-        "technology": technology,
-        "claim": claim,
-        "excerpt": claim,
+        "id": id_, "technology": technology, "claim": claim, "excerpt": claim,
         "source": {"document": "paper.pdf", "url": None, "page": 3},
         "experiment": {"model": "Llama-2-7B", "workload": "long-context", "baseline": "FP16 KV cache"},
-        "limitations": [],
-        "verification_status": verification_status,
+        "limitations": [], "verification_status": "source_checked",
     }
 
 
 class DomainNodeTest(unittest.TestCase):
-    def test_covers_all_six_criteria_for_both_technologies(self):
+    def test_covers_all_criteria_and_keeps_cited_evidence(self):
         state = new_state()
-        state["kivi_evidence"] = {
-            "evidence": [_make_evidence("kivi-1", "KIVI", "2bit 양자화로 peak memory 61% 감소")],
-            "notes": [],
-        }
-        state["infinigen_evidence"] = {
-            "evidence": [_make_evidence("inf-1", "InfiniGen", "필수 KV만 프리패치, CPU 메모리 오프로딩")],
-            "notes": [],
-        }
+        kivi_claim = "GPU memory decreased by 50%"
+        inf_claim = "InfiniGen requires CPU memory offloading and KV prefetch."
+        state["kivi_evidence"] = {"evidence": [evidence("kivi-1", "KIVI", kivi_claim)], "notes": []}
+        state["infinigen_evidence"] = {"evidence": [evidence("inf-1", "InfiniGen", inf_claim)], "notes": []}
 
-        def fake_llm(*, technology, domain, evidence):
-            self.assertEqual(domain, "GPU 기반 클라우드 LLM 서비스")
-            assessments = [
-                _CriterionAssessment(
-                    criterion=DOMAIN_CRITERIA[0].name,
-                    judgment="메모리 사용량이 크게 감소함",
-                    score=5,
-                    rationale="근거에서 peak memory 감소를 직접 확인",
-                    evidence_ids=[e["id"] for e in evidence],
-                    uncertainty=None,
-                    basis_status="source_checked",
-                )
-            ]
-            return _DomainAssessmentBatch(assessments=assessments, notes=[])
+        def fake_invoke(messages, schema):
+            if schema is OUTPUT_SCHEMA:
+                return {"evaluations": [
+                    {"technology": "KIVI", "criterion": "GPU 메모리 사용량",
+                     "judgment": "GPU 메모리가 감소함", "score": None,
+                     "rationale": "인용된 실험에서 50% 감소를 보고함",
+                     "supports": [{"evidence_id": "kivi-1", "quote": kivi_claim}],
+                     "measurement": {"kind": "reported_change", "magnitude": 50,
+                                     "direction": "decrease",
+                                     "source": {"evidence_id": "kivi-1", "quote": kivi_claim}},
+                     "uncertainty": None},
+                    {"technology": "InfiniGen", "criterion": "적용·운영 난이도",
+                     "judgment": "CPU 메모리 오프로딩과 프리패치가 필요함", "score": None,
+                     "rationale": "추가 운영 요소가 명시됨",
+                     "supports": [{"evidence_id": "inf-1", "quote": inf_claim}],
+                     "measurement": None, "uncertainty": None},
+                ], "notes": []}
+            self.assertIs(schema, VERIFY_SCHEMA)
+            return {"reviews": [
+                {"technology": "KIVI", "criterion": "GPU 메모리 사용량",
+                 "supported": True, "measurement_supported": True,
+                 "rubric_supported": False, "reason": "원문에 메모리 50% 감소가 명시됨"},
+                {"technology": "InfiniGen", "criterion": "적용·운영 난이도",
+                 "supported": True, "measurement_supported": False,
+                 "rubric_supported": False, "reason": "원문에 추가 운영 요소가 명시됨"},
+            ]}
 
-        result = evaluate(state, llm_call=fake_llm)["domain_eval"]
+        with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke) as invoke:
+            result = evaluate(state)
 
-        self.assertEqual(len(result["evaluations"]), 2 * len(DOMAIN_CRITERIA))
+        evaluations = result["domain_eval"]["evaluations"]
+        self.assertEqual(len(evaluations), 2 * len(DOMAIN_RUBRIC))
+        self.assertEqual(invoke.call_count, 2)
+        kivi = next(e for e in evaluations if (e["technology"], e["criterion"])
+                    == ("KIVI", "GPU 메모리 사용량"))
+        self.assertEqual((kivi["score"], kivi["evidence_ids"], kivi["basis_status"]),
+                         (5, ["kivi-1"], "inferred"))
+        infinigen = next(e for e in evaluations if (e["technology"], e["criterion"])
+                        == ("InfiniGen", "적용·운영 난이도"))
+        self.assertIsNone(infinigen["score"])
+        self.assertEqual((infinigen["evidence_ids"], infinigen["basis_status"]),
+                         (["inf-1"], "inferred"))
+        self.assertEqual(sum(e["basis_status"] == "unverified" for e in evaluations), 10)
+        self.assertEqual({e["id"] for e in result["domain_evidence"]["evidence"]}, {"kivi-1", "inf-1"})
+        self.assertIn("KIVI:", result["domain_eval"]["text"])
+        self.assertIn("InfiniGen:", result["domain_eval"]["text"])
 
-        kivi_memory = next(
-            e for e in result["evaluations"] if e["technology"] == "KIVI" and e["criterion"] == DOMAIN_CRITERIA[0].name
-        )
-        self.assertEqual(kivi_memory["score"], 5)
-        self.assertEqual(kivi_memory["evidence_ids"], ["kivi-1"])
-        self.assertEqual(kivi_memory["basis_status"], "source_checked")
+    def test_missing_research_result_returns_unverified_rows_without_llm(self):
+        with patch("kv_cache_eval.features.domain.node.invoke_structured") as invoke:
+            result = evaluate(new_state())
 
-        # 나머지 5개 기준은 모델이 반환하지 않았으므로 판단 보류(gap) 상태여야 한다.
-        unanswered = [e for e in result["evaluations"] if e["criterion"] != DOMAIN_CRITERIA[0].name]
-        self.assertEqual(len(unanswered), 2 * len(DOMAIN_CRITERIA) - 2)
-        self.assertTrue(all(e["score"] is None and e["judgment"] is None for e in unanswered))
-        self.assertTrue(all(e["evidence_ids"] == [] for e in unanswered))
+        invoke.assert_not_called()
+        evaluations = result["domain_eval"]["evaluations"]
+        self.assertEqual(len(evaluations), 2 * len(DOMAIN_RUBRIC))
+        self.assertTrue(all(e["score"] is None and e["basis_status"] == "unverified"
+                            and not e["evidence_ids"] for e in evaluations))
+        self.assertEqual(result["domain_evidence"]["evidence"], [])
+        self.assertTrue(any("기술 조사 결과가 필요합니다" in note for note in result["domain_eval"]["notes"]))
 
-    def test_missing_research_result_is_noted_not_crashed(self):
-        state = new_state()  # kivi_evidence / infinigen_evidence 모두 아직 None
-
-        def fake_llm(*, technology, domain, evidence):
-            raise AssertionError("근거가 없으면 LLM을 호출하지 않아야 한다")
-
-        result = evaluate(state, llm_call=fake_llm)["domain_eval"]
-        self.assertEqual(result["evaluations"], [])
-        self.assertTrue(any("기술조사 결과가 아직 없어" in n for n in result["notes"]))
-
-    def test_hallucinated_evidence_id_is_dropped_and_downgraded(self):
+    def test_hallucinated_evidence_id_is_dropped(self):
         state = new_state()
-        state["kivi_evidence"] = {"evidence": [_make_evidence("kivi-1", "KIVI", "설명")], "notes": []}
+        state["kivi_evidence"] = {"evidence": [evidence("kivi-1", "KIVI", "설명")], "notes": []}
         state["infinigen_evidence"] = {"evidence": [], "notes": []}
 
-        def fake_llm(*, technology, domain, evidence):
-            if technology != "KIVI":
-                return _DomainAssessmentBatch(assessments=[], notes=[])
-            return _DomainAssessmentBatch(
-                assessments=[
-                    _CriterionAssessment(
-                        criterion=DOMAIN_CRITERIA[1].name,
-                        judgment="전송량이 감소함",
-                        score=4,
-                        rationale="목록에 없는 id를 인용함",
-                        evidence_ids=["존재하지-않는-id"],
-                        uncertainty=None,
-                        basis_status="inferred",
-                    )
-                ],
-                notes=[],
-            )
+        def fake_invoke(messages, schema):
+            self.assertIs(schema, OUTPUT_SCHEMA)
+            return {"evaluations": [
+                {"technology": "KIVI", "criterion": "데이터 전송량",
+                 "judgment": "전송량이 감소함", "score": 4,
+                 "rationale": "존재하지 않는 근거를 인용함",
+                 "supports": [{"evidence_id": "없는-id", "quote": "설명"}],
+                 "measurement": None, "uncertainty": None},
+            ], "notes": []}
 
-        result = evaluate(state, llm_call=fake_llm)["domain_eval"]
-        transfer = next(
-            e for e in result["evaluations"] if e["technology"] == "KIVI" and e["criterion"] == DOMAIN_CRITERIA[1].name
-        )
+        with patch("kv_cache_eval.features.domain.node.invoke_structured", side_effect=fake_invoke) as invoke:
+            result = evaluate(state)
+
+        self.assertEqual(invoke.call_count, 1)
+        transfer = next(e for e in result["domain_eval"]["evaluations"]
+                        if (e["technology"], e["criterion"]) == ("KIVI", "데이터 전송량"))
         self.assertIsNone(transfer["score"])
         self.assertIsNone(transfer["judgment"])
         self.assertEqual(transfer["evidence_ids"], [])
         self.assertEqual(transfer["basis_status"], "unverified")
-        self.assertTrue(any("확인되지 않은 근거 ID" in n for n in result["notes"]))
+        self.assertIn("근거 ID", transfer["uncertainty"])
+        self.assertEqual(result["domain_evidence"]["evidence"], [])
 
 
 if __name__ == "__main__":
