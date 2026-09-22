@@ -53,10 +53,14 @@ def _require_evaluation(
 
 
 def _collect_valid_evidence_ids(state: State) -> set[str]:
-    """KIVI와 InfiniGen 조사 결과에 실제 존재하는 근거 ID를 수집한다."""
+    """기술 조사와 시장성 조사 결과에 실제 존재하는 근거 ID를 수집한다."""
     evidence_ids: set[str] = set()
 
-    for key in ("kivi_evidence", "infinigen_evidence"):
+    for key in (
+        "kivi_evidence",
+        "infinigen_evidence",
+        "market_evidence",
+    ):
         research_result = state.get(key)
 
         if research_result is None:

@@ -66,10 +66,14 @@ def _require_value(state: State, key: str) -> Any:
 
 
 def _collect_evidence(state: State) -> dict[str, Evidence]:
-    """두 기술의 조사 결과를 근거 ID 기준으로 정리한다."""
+    """기술 조사와 시장성 조사 결과를 근거 ID 기준으로 정리한다."""
     evidence_by_id: dict[str, Evidence] = {}
 
-    for key in ("kivi_evidence", "infinigen_evidence"):
+    for key in (
+        "kivi_evidence",
+        "infinigen_evidence",
+        "market_evidence",
+    ):
         research_result = state.get(key)
 
         if research_result is None:
@@ -242,7 +246,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ReportLab에서 제공하는 한국어 CID 폰트를 사용한다.
-    # 운영체제별 로컬 폰트 경로에 의존하지 않으므로 팀 환경에서 사용하기 쉽다.
+    # 운영체제별 로컬 폰트 경로에 의존하지 않도록 설정한다.
     font_name = "HYSMyeongJo-Medium"
     pdfmetrics.registerFont(UnicodeCIDFont(font_name))
 
@@ -332,7 +336,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
             heading = summary_title_style
             content_style = body_style
         elif section_title == "REFERENCE":
-            # REFERENCE는 보고서의 마지막 장에서 시작한다.
+            # REFERENCE는 보고서 마지막 장에서 시작한다.
             if index > 0:
                 story.append(PageBreak())
 
