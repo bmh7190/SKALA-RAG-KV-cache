@@ -200,22 +200,23 @@ class InfiniGenTest(unittest.TestCase):
         if DEFAULT_DOCUMENT_DIR.exists() and list(DEFAULT_DOCUMENT_DIR.glob("*.pdf")):
             self.assertEqual(validate_sources(sources, DEFAULT_DOCUMENT_DIR, budget), 91)
 
-    def test_web_uses_extracted_body_and_tool_url_only(self):
+    def test_web_uses_search_raw_content_not_snippets(self):
         from kv_cache_eval.features.technical_research.web import search_web
 
         with patch.dict(os.environ, {"TAVILY_API_KEY": "test-only"}), \
-             patch("langchain_tavily.TavilySearch") as search, \
-             patch("langchain_tavily.TavilyExtract") as extract:
+             patch("langchain_tavily.TavilySearch") as search:
             search.return_value.invoke.return_value = {"results": [
-                {"title": "Project page", "url": "https://example.org/project", "content": "search snippet only"},
+                {"title": "Project page", "url": "https://example.org/project",
+                 "content": "search snippet only", "raw_content": "The project page lists a public implementation."},
                 {"title": "Unavailable page", "url": "https://example.org/missing", "content": "summary"},
+                {"title": "Bad URL", "url": "not-a-url", "raw_content": "must be ignored"},
             ]}
-            extract.return_value.invoke.return_value = {"results": [
-                {"url": "https://example.org/project", "raw_content": "The project page lists a public implementation."},
-                {"url": "https://unlisted.example/page", "raw_content": "must be ignored"},
-            ], "failed_results": [{"url": "https://example.org/missing"}]}
             docs, notes = search_web("InfiniGen public implementation", "InfiniGen")
-        self.assertTrue(any("일부 추출 실패" in note for note in notes))
+            search.assert_called_once_with(max_results=3, search_depth="basic", include_answer=False,
+                                           include_raw_content=True)
+            search.return_value.invoke.assert_called_once_with({"query": "InfiniGen public implementation"})
+        self.assertTrue(any("본문 누락" in note for note in notes))
+        self.assertTrue(any("URL 오류" in note for note in notes))
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0].metadata["page"], None)
         self.assertEqual(docs[0].metadata["source_url"], "https://example.org/project")
@@ -247,8 +248,7 @@ class InfiniGenTest(unittest.TestCase):
         from kv_cache_eval.features.technical_research.web import search_web
 
         with patch.dict(os.environ, {"TAVILY_API_KEY": "test-only"}), \
-             patch("langchain_tavily.TavilySearch") as search, \
-             patch("langchain_tavily.TavilyExtract") as extract:
+             patch("langchain_tavily.TavilySearch") as search:
             search.return_value.invoke.side_effect = RuntimeError("private provider details")
             docs, notes = search_web("public support", "InfiniGen")
             self.assertEqual(docs, [])
@@ -256,14 +256,18 @@ class InfiniGenTest(unittest.TestCase):
             self.assertFalse(any("private provider details" in note for note in notes))
 
             search.return_value.invoke.side_effect = None
-            search.return_value.invoke.return_value = {"results": [
-                {"title": "Page", "url": "https://example.org/page"},
-            ]}
-            extract.return_value.invoke.side_effect = RuntimeError("private extraction details")
+            search.return_value.invoke.return_value = {"results": "invalid"}
             docs, notes = search_web("public support", "InfiniGen")
             self.assertEqual(docs, [])
-            self.assertTrue(any("웹 본문 추출 실패" in note and "근거 부재로 판단하지 않음" in note for note in notes))
-            self.assertFalse(any("private extraction details" in note for note in notes))
+            self.assertTrue(any("응답 오류" in note for note in notes))
+
+            search.return_value.invoke.return_value = {"results": [
+                {"title": "Page", "url": "https://example.org/page", "content": "snippet only"},
+            ]}
+            docs, notes = search_web("public support", "InfiniGen")
+            self.assertEqual(docs, [])
+            self.assertTrue(any("본문 누락" in note for note in notes))
+            self.assertTrue(any("검색 요약은 근거로 사용하지 않음" in note for note in notes))
 
     def test_web_only_skips_rag_and_missing_key_is_unresolved(self):
         from kv_cache_eval.features.technical_research.prompts import ResearchQuestion
