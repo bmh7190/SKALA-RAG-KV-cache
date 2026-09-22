@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langchain_core.documents import Document
 
 
 SOURCES_FILE = Path(__file__).with_name("sources.json")
@@ -25,23 +27,6 @@ class Source:
     file: str
     page_count: int
     sha256: str
-
-
-@dataclass(frozen=True)
-class Chunk:
-    id: str
-    text: str
-    source_id: str
-    source_title: str
-    source_url: str
-    source_role: str
-    subject_technology: str
-    page: int  # 1-based physical PDF page, not printed paper page
-    char_start: int
-    char_end: int
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def load_sources(path: Path = SOURCES_FILE) -> tuple[list[Source], int]:
@@ -83,43 +68,39 @@ def validate_sources(sources: list[Source], document_dir: Path, page_budget: int
     return total
 
 
-def _clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def make_chunks(
     sources: list[Source], document_dir: Path, tokenizer: Any, chunk_tokens: int, overlap_tokens: int
-) -> list[Chunk]:
-    """실제 모델 tokenizer의 문자 offset을 이용해 페이지를 넘지 않는 청크를 만든다."""
-    from pypdf import PdfReader
+) -> list[Document]:
+    """LangChain PDF loader와 토큰 길이 splitter로 페이지별 청크를 만든다."""
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_core.documents import Document
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     if chunk_tokens <= 0 or not 0 <= overlap_tokens < chunk_tokens:
         raise ValueError("chunk_tokens > overlap_tokens >= 0 이어야 합니다")
-    if not getattr(tokenizer, "is_fast", False):
-        raise ValueError("페이지 내 원문 offset 보존을 위해 fast tokenizer가 필요합니다")
-    chunks: list[Chunk] = []
-    step = chunk_tokens - overlap_tokens
+    splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+        tokenizer, chunk_size=chunk_tokens, chunk_overlap=overlap_tokens,
+    )
+    chunks: list[Document] = []
     for source in sources:
-        for page_number, page in enumerate(PdfReader(document_dir / source.file).pages, 1):
-            text = _clean_text(page.extract_text() or "")
-            if not text:
-                continue
-            offsets = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)["offset_mapping"]
-            for token_start in range(0, len(offsets), step):
-                token_end = min(token_start + chunk_tokens, len(offsets))
-                start = offsets[token_start][0]
-                end = offsets[token_end - 1][1]
-                piece = text[start:end].strip()
-                if not piece:
+        pages = PyPDFLoader(str(document_dir / source.file), mode="page").load()
+        if len(pages) != source.page_count:
+            raise ValueError(f"PDF 로더 페이지 수 불일치: {source.document_id}")
+        for page in pages:
+            page_number = int(page.metadata["page"]) + 1
+            for chunk_number, piece in enumerate(splitter.split_documents([page])):
+                text = piece.page_content.strip()
+                if not text:
                     continue
-                stable = f"{source.document_id}:{page_number}:{start}:{end}:{piece}".encode("utf-8")
-                chunks.append(Chunk(
-                    id=hashlib.sha256(stable).hexdigest()[:20], text=piece,
-                    source_id=source.document_id, source_title=source.title,
-                    source_url=source.source_url, source_role=source.evidence_role,
-                    subject_technology=source.subject_technology,
-                    page=page_number, char_start=start, char_end=end,
-                ))
-                if token_end == len(offsets):
-                    break
+                stable = f"{source.document_id}:{page_number}:{chunk_number}:{text}".encode("utf-8")
+                chunk_id = hashlib.sha256(stable).hexdigest()[:20]
+                chunks.append(Document(id=chunk_id, page_content=text, metadata={
+                    "chunk_id": chunk_id,
+                    "source_id": source.document_id,
+                    "source_title": source.title,
+                    "source_url": source.source_url,
+                    "source_role": source.evidence_role,
+                    "subject_technology": source.subject_technology,
+                    "page": page_number,  # 1-based physical PDF page
+                }))
     return chunks

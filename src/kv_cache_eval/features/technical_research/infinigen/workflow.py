@@ -8,19 +8,20 @@ from collections.abc import Callable
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langchain_core.documents import Document
 from pydantic import BaseModel, Field
 
 from kv_cache_eval.common.schemas import Evidence, ResearchResult
 from kv_cache_eval.features.technical_research.infinigen.prompts import (
     EXTRACT_SYSTEM, REVIEW_SYSTEM, ResearchQuestion, hits_context,
 )
-from kv_cache_eval.features.technical_research.infinigen.retriever import LocalRetriever, SearchHit
+from kv_cache_eval.features.technical_research.infinigen.retriever import LocalRetriever
 
 
 class Review(BaseModel):
     sufficient: bool
     reason: str
-    revised_query: str = ""
+    refinement_terms: list[str] = Field(default_factory=list)
 
 
 class Claim(BaseModel):
@@ -46,28 +47,31 @@ class CallBudgetExhausted(RuntimeError):
 class ModelReviewer:
     """실제 LLM 호출을 한 곳에서 계수하고 자동 재시도를 막는다."""
 
-    def __init__(self, llm: object, max_calls: int):
+    def __init__(self, llm: object, max_calls: int, target: str):
         if max_calls <= 0:
             raise ValueError("max_calls는 양수여야 합니다")
-        self.llm, self.max_calls, self.calls = llm, max_calls, 0
+        self.llm, self.max_calls, self.calls, self.target = llm, max_calls, 0, target
 
     def _invoke(self, schema: type[BaseModel], system: str, user: str) -> BaseModel:
         if self.calls >= self.max_calls:
             raise CallBudgetExhausted(f"LLM 호출 상한 {self.max_calls}회 소진")
         self.calls += 1
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.prompts import ChatPromptTemplate
 
-        return self.llm.with_structured_output(schema).invoke([
-            SystemMessage(content=system), HumanMessage(content=user),
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "{system}"), ("human", "{user}"),
         ])
+        return (prompt | self.llm.with_structured_output(schema)).invoke({
+            "system": system, "user": user,
+        })
 
-    def review(self, question: str, hits: list[SearchHit]) -> Review:
+    def review(self, question: str, hits: list[Document]) -> Review:
         return self._invoke(Review, REVIEW_SYSTEM,
-                            f"Question: {question}\n\nRetrieved passages:\n{hits_context(hits)}")
+                            f"Selected target: {self.target}\nQuestion: {question}\n\nRetrieved passages:\n{hits_context(hits)}")
 
-    def extract(self, question: str, hits: list[SearchHit]) -> Extraction:
+    def extract(self, question: str, hits: list[Document]) -> Extraction:
         return self._invoke(Extraction, EXTRACT_SYSTEM,
-                            f"Question: {question}\n\nRetrieved passages:\n{hits_context(hits)}")
+                            f"Selected target: {self.target}\nQuestion: {question}\n\nRetrieved passages:\n{hits_context(hits)}")
 
 
 class QuestionState(TypedDict):
@@ -76,7 +80,7 @@ class QuestionState(TypedDict):
     attempt: int
     max_attempts: int
     top_k: int
-    hits: list[SearchHit]
+    hits: list[Document]
     review: Review | None
     evidence: list[Evidence]
     notes: list[str]
@@ -86,31 +90,33 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def ground_claim(claim: Claim, hits: list[SearchHit]) -> Evidence | None:
+def ground_claim(claim: Claim, hits: list[Document], *, target: str) -> Evidence | None:
     """LLM의 출처 정보가 검색된 청크와 일치할 때만 source_checked로 기록."""
-    hit = next((item for item in hits if item.chunk.id == claim.chunk_id), None)
-    if hit is None:
+    doc = next((item for item in hits if item.metadata["chunk_id"] == claim.chunk_id), None)
+    if doc is None:
         return None
-    chunk = hit.chunk
+    meta = doc.metadata
     excerpt = _normalized(claim.excerpt)
-    if (claim.source_id != chunk.source_id or claim.page != chunk.page
-            or not excerpt or excerpt not in _normalized(chunk.text)
+    if (claim.source_id != meta["source_id"] or claim.page != meta["page"]
+            or not excerpt or excerpt not in _normalized(doc.page_content)
             or not claim.claim.strip()):
         return None
-    if chunk.source_role != "primary":
-        # 비교 문서의 자체 결과를 InfiniGen 결과로 둔갑시키지 않는다.
-        if chunk.subject_technology.lower() not in claim.claim.lower() or "infinigen" in claim.claim.lower():
+    if meta["source_role"] == "primary" and meta["subject_technology"].casefold() != target.casefold():
+        return None
+    if meta["source_role"] != "primary":
+        # 비교 문서의 자체 결과를 조사 대상으로 둔갑시키지 않는다.
+        if meta["subject_technology"].casefold() not in claim.claim.casefold() or target.casefold() in claim.claim.casefold():
             return None
-    stable = f"{chunk.source_id}:{chunk.page}:{excerpt}".encode("utf-8")
+    stable = f"{meta['source_id']}:{meta['page']}:{excerpt}".encode("utf-8")
     evidence_id = "infinigen-" + hashlib.sha256(stable).hexdigest()[:20]
-    passage = _normalized(chunk.text).casefold()
+    passage = _normalized(doc.page_content).casefold()
     context = {key: _normalized(value) for key, value in {
         "model": claim.model, "workload": claim.workload, "baseline": claim.baseline,
     }.items() if value and _normalized(value).casefold() in passage}
     return {
-        "id": evidence_id, "technology": "InfiniGen", "claim": claim.claim.strip(),
+        "id": evidence_id, "technology": target, "claim": claim.claim.strip(),
         "excerpt": excerpt,
-        "source": {"document": chunk.source_id, "url": chunk.source_url, "page": chunk.page},
+        "source": {"document": meta["source_id"], "url": meta["source_url"], "page": meta["page"]},
         "experiment": context or None,
         "limitations": claim.limitations,
         "verification_status": "source_checked",
@@ -118,9 +124,10 @@ def ground_claim(claim: Claim, hits: list[SearchHit]) -> Evidence | None:
 
 
 def build_question_graph(
-    search: Callable[[str, int], list[SearchHit]],
-    review: Callable[[str, list[SearchHit]], Review],
-    extract: Callable[[str, list[SearchHit]], Extraction],
+    search: Callable[[str, int], list[Document]],
+    review: Callable[[str, list[Document]], Review],
+    extract: Callable[[str, list[Document]], Extraction],
+    *, target: str,
 ):
     def draft(state: QuestionState) -> dict:
         return {"query": state["question"]}
@@ -131,7 +138,7 @@ def build_question_graph(
 
     def grade(state: QuestionState) -> dict:
         if not state["hits"]:
-            decision = Review(sufficient=False, reason="검색 결과 없음", revised_query="InfiniGen KV cache " + state["question"])
+            decision = Review(sufficient=False, reason="검색 결과 없음")
         else:
             decision = review(state["question"], state["hits"])
         return {"review": decision}
@@ -142,13 +149,19 @@ def build_question_graph(
         return "revise" if state["attempt"] < state["max_attempts"] else "unresolved"
 
     def revise(state: QuestionState) -> dict:
-        revised = state["review"].revised_query.strip() if state["review"] else ""
-        query = revised if revised and revised != state["query"] else "InfiniGen evidence " + state["question"]
+        bodies = [_normalized(doc.page_content).casefold() for doc in state["hits"]]
+        terms = []
+        for candidate in (state["review"].refinement_terms if state["review"] else [])[:3]:
+            term = _normalized(candidate)
+            if 2 <= len(term) <= 80 and any(term.casefold() in body for body in bodies) and term not in terms:
+                terms.append(term)
+        # 원래 목적을 보존하고, 검증된 본문 용어만 검색 힌트로 추가한다.
+        query = state["question"] + (" " + " ".join(terms) if terms else " 원문 근거 설명 측정 비교")
         return {"query": query}
 
     def extract_node(state: QuestionState) -> dict:
         raw = extract(state["question"], state["hits"])
-        verified = [item for claim in raw.claims if (item := ground_claim(claim, state["hits"]))]
+        verified = [item for claim in raw.claims if (item := ground_claim(claim, state["hits"], target=target))]
         unique = {item["id"]: item for item in verified}
         notes = list(state["notes"])
         if len(verified) < len(raw.claims):
@@ -182,11 +195,11 @@ def build_question_graph(
 
 def research_questions(
     questions: list[ResearchQuestion], retriever: LocalRetriever, reviewer: ModelReviewer,
-    top_k: int = 5, max_attempts: int = 2, prior: ResearchResult | None = None,
+    *, target: str, top_k: int = 5, max_attempts: int = 2, prior: ResearchResult | None = None,
 ) -> ResearchResult:
     if not 1 <= max_attempts <= 5 or top_k <= 0:
         raise ValueError("max_attempts는 1~5, top_k는 양수여야 합니다")
-    graph = build_question_graph(retriever.search, reviewer.review, reviewer.extract)
+    graph = build_question_graph(retriever.search, reviewer.review, reviewer.extract, target=target)
     evidence = {item["id"]: item for item in (prior or {}).get("evidence", [])}
     notes = list((prior or {}).get("notes", []))
     for question_index, question in enumerate(questions):

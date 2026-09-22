@@ -33,9 +33,9 @@ def research_infinigen(
 ) -> StateUpdate:
     llm = make_runtime_llm()
     retriever, _ = ensure_index(settings=settings)
-    reviewer = ModelReviewer(llm, max_calls=max_llm_calls)
-    questions = questions_for_state(state)
-    result = research_questions(questions, retriever, reviewer, top_k=top_k,
+    reviewer = ModelReviewer(llm, max_calls=max_llm_calls, target="InfiniGen")
+    questions = questions_for_state(state, target="InfiniGen")
+    result = research_questions(questions, retriever, reviewer, target="InfiniGen", top_k=top_k,
                                 max_attempts=max_attempts, prior=state["infinigen_evidence"])
     result["notes"].append(f"InfiniGen 조사: 질문 {len(questions)}개, LLM 호출 {reviewer.calls}/{max_llm_calls}, 외부 재조사 라운드 {state['research_round']}")
     return {"infinigen_evidence": result}

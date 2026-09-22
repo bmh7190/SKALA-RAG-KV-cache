@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from kv_cache_eval.common.state import State
-from kv_cache_eval.features.technical_research.infinigen.retriever import SearchHit
+
+if TYPE_CHECKING:
+    from langchain_core.documents import Document
 
 
 @dataclass(frozen=True)
@@ -14,44 +17,53 @@ class ResearchQuestion:
     text: str
 
 
-QUESTIONS = (
-    ResearchQuestion("mechanism", "InfiniGen은 CPU 메모리의 KV pool에서 필요한 항목을 어떻게 예측하고 GPU로 가져오는가?"),
-    ResearchQuestion("memory", "InfiniGen의 GPU·CPU 메모리 사용량과 partial weight/key cache의 추가 메모리 오버헤드는 무엇인가?"),
-    ResearchQuestion("performance", "InfiniGen의 데이터 전송량, 지연시간, 처리량 결과는 어떤 시스템과 비교했고 실험 조건은 무엇인가?"),
-    ResearchQuestion("accuracy", "InfiniGen의 정확도 또는 perplexity 결과와 중요한 KV 선택 기준은 무엇인가?"),
-    ResearchQuestion("conditions", "InfiniGen 논문의 GPU·CPU·PCIe·모델·워크로드 조건과 적용 한계는 무엇인가?"),
-    ResearchQuestion("baselines", "FlexGen과 H2O는 어떤 방법이며 InfiniGen 논문에서 각각 어떤 비교 배경인가?"),
+QUESTION_TEMPLATES = (
+    ResearchQuestion("mechanism", "{target}은 어떤 문제를 해결하며 핵심 동작 원리는 무엇인가?"),
+    ResearchQuestion("memory", "{target}의 자원 사용량 절감 효과와 새로 드는 비용은 무엇인가?"),
+    ResearchQuestion("performance", "{target}의 성능은 무엇을 어떻게 측정했고 어떤 기준과 비교했는가?"),
+    ResearchQuestion("accuracy", "{target}이 결과 품질에 미치는 영향은 어떻게 측정되었는가?"),
+    ResearchQuestion("conditions", "{target}의 실험 환경, 적용 조건, 한계는 무엇인가?"),
+    ResearchQuestion("baselines", "{target}과 관련 기술의 차이는 무엇이며 문서에서 어떤 근거로 비교하는가?"),
 )
 
 
-def questions_for_state(state: State) -> list[ResearchQuestion]:
+def questions_for_state(state: State, target: str) -> list[ResearchQuestion]:
     domain = state["domain_and_criteria"]["domain"]
-    questions = [ResearchQuestion(item.id, f"{item.text} 적용 도메인: {domain}") for item in QUESTIONS]
+    questions = [ResearchQuestion(item.id, f"{item.text.format(target=target)} 적용 도메인: {domain}")
+                 for item in QUESTION_TEMPLATES]
     gap_questions = []
     for index, gap in enumerate(state.get("evidence_gaps") or []):
-        if gap["technology"] in (None, "InfiniGen"):
-            gap_questions.append(ResearchQuestion(f"gap-{index}", f"InfiniGen의 {gap['criterion']} 근거 공백: {gap['reason']}. 적용 도메인: {domain}"))
+        if gap["technology"] in (None, target):
+            gap_questions.append(ResearchQuestion(f"gap-{index}", f"{target}의 {gap['criterion']} 근거 공백: {gap['reason']}. 적용 도메인: {domain}"))
     return gap_questions + questions if state["research_round"] > 0 else questions + gap_questions
 
 
-def hits_context(hits: list[SearchHit], max_chars: int = 1700) -> str:
+def hits_context(hits: list[Document], max_chars: int = 1700) -> str:
     return "\n\n".join(
-        f"[chunk_id={hit.chunk.id} | source_id={hit.chunk.source_id} | role={hit.chunk.source_role} "
-        f"| subject={hit.chunk.subject_technology} | physical_pdf_page={hit.chunk.page} | score={hit.score:.4f}]\n"
-        f"{hit.chunk.text[:max_chars]}"
-        for hit in hits
+        f"[chunk_id={doc.metadata['chunk_id']} | source_id={doc.metadata['source_id']} "
+        f"| title={doc.metadata['source_title']} | role={doc.metadata['source_role']} "
+        f"| subject={doc.metadata['subject_technology']} "
+        f"| physical_pdf_page={doc.metadata['page']} | rank={rank}]\n"
+        f"{doc.page_content[:max_chars]}"
+        for rank, doc in enumerate(hits, 1)
     )
 
 
-REVIEW_SYSTEM = """You check whether retrieved passages answer the question. Use only supplied passages.
-Primary InfiniGen paper supports direct InfiniGen claims. FlexGen and H2O papers are background or baselines;
-their own results must never be reported as InfiniGen results. If a direct InfiniGen claim lacks primary-paper
-support, mark insufficient. Return a focused revised query when insufficient. Do not invent sources or page numbers."""
+REVIEW_SYSTEM = """Check whether retrieved passages answer the question about the selected target technology.
+Use source metadata (title, subject, role, ID) to identify candidate documents and attribution. A title or
+catalog entry alone does not prove a factual answer or number: verify it in the supplied passage body.
+Direct claims about the target require primary-source body support. Background documents may explain their
+own subject, but their results cannot be attributed to the target. If insufficient, return up to three short
+refinement_terms copied verbatim from retrieved passage bodies that can narrow the same question's purpose.
+Do not assume a mechanism or comparison technology before reading the passages. Do not invent facts, sources,
+pages, or search terms not present in the supplied body."""
 
-EXTRACT_SYSTEM = """Extract up to two short, distinct claims supported by exact excerpts in the supplied passages.
+EXTRACT_SYSTEM = """Extract up to two short, distinct claims about the selected target or clearly attributed
+background subjects, supported by exact excerpts in the supplied passages.
 For every claim copy an excerpt verbatim from one chunk, and copy its chunk_id, source_id and physical PDF page.
-Use primary passages for InfiniGen results. For FlexGen/H2O background, name that subject explicitly in the
-claim and never attribute its result to InfiniGen. For model, workload and baseline, copy only a value
+Use source metadata to identify candidates and attribution, but confirm facts and numbers in the body only.
+Use primary passages for the selected target's results. For background passages, name that subject explicitly
+in the claim and never attribute its result to the target. For model, workload and baseline, copy only a value
 explicitly present in that same source chunk. Never copy the question's application domain or infer an
 experimental condition. Use null when the chunk does not state a condition. State limitations or uncertainty
 rather than inventing facts. Return no claims

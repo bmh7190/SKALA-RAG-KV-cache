@@ -108,20 +108,22 @@ curl -L 'https://proceedings.neurips.cc/paper_files/paper/2023/file/6ceefa7b1557
 .venv/bin/python scripts/run_infinigen.py index
 
 # 모델 캐시가 이미 있다면 이후 오프라인으로 재사용하고 평가 가능
-HF_HUB_OFFLINE=1 .venv/bin/python scripts/run_infinigen.py index
-HF_HUB_OFFLINE=1 .venv/bin/python scripts/run_infinigen.py evaluate --top-k 5
+HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python scripts/run_infinigen.py index
+HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python scripts/run_infinigen.py evaluate --top-k 5
 
 # .env의 LLM_PROVIDER, LLM_MODEL, API 키를 사용하는 실제 조사
-env -u OPENAI_API_KEY HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python scripts/run_infinigen.py research --questions 1 --max-attempts 1 --max-llm-calls 2
+env -u OPENAI_API_KEY HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false .venv/bin/python scripts/run_infinigen.py research --questions 1 --max-attempts 2 --max-llm-calls 4
 ```
 
 위 `env -u OPENAI_API_KEY`는 셸에 남은 키 대신 `.env`의 키를 사용하려는 예시입니다. 셸 키를 사용한다면 그 부분을 빼세요. `research`에는 생성 LLM API 연결이 필요합니다. 다운로드한 PDF의 버전이나 바이트가 다르면 해시 검사가 실패하므로 `sources.json`에 기록된 원문 버전을 확인하세요.
 
-`index`는 384토큰 청크와 64토큰 겹침을 기본으로 사용하며, 정규화한 dense 벡터를 FAISS inner product로 검색합니다. 색인 지문은 PDF 해시, 출처 정보, 임베딩 모델, 청킹 설정을 포함합니다. `vectors.faiss`와 `chunks.json`의 해시를 검사해 변경 시 재생성하며 pickle은 읽지 않습니다. 파일은 `data/indexes/infinigen/`에 저장합니다. CPU 환경에서는 PyTorch와 FAISS 스레드를 각각 1개로 제한합니다.
+현재 구조는 **사람이 선정한 기술을, 내용을 미리 모르는 문서 집합에서 조사**합니다. 전체 기술 후보를 문서 전체에서 자동으로 선정하는 기능은 별도 범위입니다. 최초 질문은 공통 조사 목적 여섯 가지로 만들고, 문서 제목·역할·주제 메타데이터는 후보를 찾는 데 사용합니다. 주장과 수치는 검색된 본문에서 확인합니다. 재검색에는 본문에서 실제 확인된 용어만 원래 질문에 추가합니다.
+
+실습의 LangChain 구성요소를 그대로 따라갑니다: `ingest.py`의 `PyPDFLoader`와 `RecursiveCharacterTextSplitter.from_huggingface_tokenizer`가 페이지별 청크를 만들고, `retriever.py`의 `HuggingFaceEmbeddings`·`FAISS.from_documents`·`as_retriever().invoke`가 검색합니다. `workflow.py`의 `ChatPromptTemplate | llm.with_structured_output` 체인과 LangGraph가 충분성 검토·추출·제한된 재검색을 연결합니다. 색인 지문은 PDF 해시, 출처 정보, 임베딩 모델, 청킹 설정을 포함합니다. `FAISS.save_local/load_local`의 로컬 캐시에는 pickle이 포함되므로, 이 코드가 만든 캐시의 지문과 각 파일 해시가 모두 맞을 때만 읽습니다. 파일은 `data/indexes/infinigen/`에 저장합니다. CPU 환경에서는 PyTorch와 FAISS 스레드를 각각 1개로 제한합니다.
 
 `research`는 질문별로 검색 → 충분성 판단 → 근거 추출을 실행합니다. 부족하거나 발췌가 검증되지 않으면 설정한 횟수 안에서 질의를 수정해 재검색합니다. LLM 호출 상한에 도달하면 남은 질문을 미확인으로 기록합니다. 모델이 제시한 청크 ID, 출처 ID, 물리 PDF 페이지, 발췌가 실제 검색 청크와 일치해야 `source_checked` 근거로 남습니다. `model`·`workload`·`baseline` 실험 조건도 해당 청크 원문에서 확인되는 값만 저장합니다. 비교 문서의 자체 결과를 InfiniGen 결과로 귀속한 후보도 제외합니다. **이 검사는 출처 연결 검사이며, 주장 전체의 의미가 발췌와 일치하는지 사람 또는 별도 평가가 확인해야 합니다.**
 
-`evaluate`는 고정 개발 질문집 `tests/fixtures/infinigen_questions.json`의 답변 가능 질문 12개에서 출처 ID와 물리 페이지가 일치하는 첫 검색 순위를 측정합니다. 2026-09-22에 이 질문집을 수정하지 않고 측정한 결과는 **HitRate@5 0.75(9/12), MRR@5 0.535**입니다. 근거 없음 질문 2개는 검색 결과만으로 답변 거절을 판정할 수 없어 점수에서 제외했습니다. 결과 상세와 질문집 SHA256은 무시되는 `data/cache/infinigen/retrieval_eval.json`에 저장됩니다. `research` 결과에는 임베딩 모델과 생성 LLM 제공자·모델을 별도 필드로 기록합니다. 이는 작은 개발 집합의 페이지 검색 점수이며, 최종 주장 정확도나 다른 환경에서의 성능을 뜻하지 않습니다. 놓친 질문은 `ig07`, `h201`, `h202`입니다.
+`evaluate`는 고정 개발 질문집 `tests/fixtures/infinigen_questions.json`의 답변 가능 질문 12개에서 출처 ID와 물리 페이지가 일치하는 첫 검색 순위를 측정합니다. 기존 수동 분할 색인의 **HitRate@5 0.75(9/12), MRR@5 0.535**는 `data/cache/infinigen/retrieval_eval_initial.json`에 보존했습니다. 새 LangChain 분할·검색 색인은 질문집을 수정하지 않고 **HitRate@5 0.75(9/12), MRR@5 0.576**을 기록했으며 상세 결과는 `retrieval_eval_langchain.json`에 별도로 보존했습니다. 두 수치 모두 고정 질문의 페이지 검색만 평가하며 일반 질문 흐름의 답변 정확도는 뜻하지 않습니다. 근거 없음 질문 2개는 검색 결과만으로 답변 거절을 판정할 수 없어 점수에서 제외합니다. `research` 결과에는 임베딩 모델과 생성 LLM 제공자·모델을 별도 필드로 기록합니다. 이 질문집은 작은 개발 집합이며 최종 주장 정확도나 다른 환경에서의 성능을 뜻하지 않습니다.
 
 ## State와 노드 규약
 

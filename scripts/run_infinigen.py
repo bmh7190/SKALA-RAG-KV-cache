@@ -34,23 +34,25 @@ def evaluate_retrieval(retriever, fixture: dict, top_k: int) -> dict:
                     for source in item["relevant_sources"] for page in source["pdf_pages"]}
         hits = retriever.search(item["question"], top_k)
         rank = next((rank for rank, hit in enumerate(hits, 1)
-                     if (hit.chunk.source_id, hit.chunk.page) in expected), None)
+                     if (hit.metadata["source_id"], hit.metadata["page"]) in expected), None)
         if rank is not None:
             hits_count += 1
             reciprocal_sum += 1 / rank
         rows.append({
             "id": item["id"], "question": item["question"], "expected": sorted(expected),
             "first_relevant_rank": rank,
-            "retrieved": [{"source_id": hit.chunk.source_id, "page": hit.chunk.page,
-                           "chunk_id": hit.chunk.id, "score": round(hit.score, 6)} for hit in hits],
+            "retrieved": [{"source_id": hit.metadata["source_id"], "page": hit.metadata["page"],
+                           "chunk_id": hit.metadata["chunk_id"], "rank": rank}
+                          for rank, hit in enumerate(hits, 1)],
         })
     # 근거 없음 질문은 검색 결과만으로 정답/거절을 판정할 수 없다.
     for item in negatives:
         hits = retriever.search(item["question"], top_k)
         rows.append({"id": item["id"], "question": item["question"], "answerable": False,
                      "abstention_scored": False,
-                     "retrieved": [{"source_id": hit.chunk.source_id, "page": hit.chunk.page,
-                                    "chunk_id": hit.chunk.id, "score": round(hit.score, 6)} for hit in hits]})
+                     "retrieved": [{"source_id": hit.metadata["source_id"], "page": hit.metadata["page"],
+                                    "chunk_id": hit.metadata["chunk_id"], "rank": rank}
+                                   for rank, hit in enumerate(hits, 1)]})
     return {"question_count": len(answerable), "negative_count": len(negatives),
             "top_k": top_k, "hit_rate_at_k": hits_count / len(answerable),
             "mrr_at_k": reciprocal_sum / len(answerable), "questions": rows}
@@ -102,15 +104,17 @@ def main() -> None:
         print(json.dumps({"hit_rate_at_k": result["hit_rate_at_k"], "mrr_at_k": result["mrr_at_k"],
                           "question_count": result["question_count"], "result_file": str(target)}, ensure_ascii=False))
         return
-    reviewer = ModelReviewer(llm, args.max_llm_calls)
-    questions = questions_for_state(new_state())[:args.questions]
-    result = research_questions(questions, retriever, reviewer, args.top_k, args.max_attempts)
+    reviewer = ModelReviewer(llm, args.max_llm_calls, target="InfiniGen")
+    questions = questions_for_state(new_state(), target="InfiniGen")[:args.questions]
+    result = research_questions(questions, retriever, reviewer, target="InfiniGen",
+                                top_k=args.top_k, max_attempts=args.max_attempts)
     target = DEFAULT_CACHE / "research_result.json"
     target.write_text(json.dumps({
         "measured_at_utc": datetime.now(timezone.utc).isoformat(),
         "embedding_model": settings.resolved().model_name,
         "llm_provider": os.environ["LLM_PROVIDER"],
         "llm_model": os.environ["LLM_MODEL"],
+        "question_strategy": "selected-target-common-goals-v1",
         "index_fingerprint": index_info["fingerprint"],
         "llm_calls": reviewer.calls, "llm_call_limit": args.max_llm_calls,
         "questions": [item.id for item in questions], "result": result,
