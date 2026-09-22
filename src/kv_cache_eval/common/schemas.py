@@ -2,7 +2,6 @@
 
 from typing import Literal, NotRequired, TypedDict
 
-
 Technology = Literal["KIVI", "InfiniGen"]
 BasisStatus = Literal["unverified", "source_checked", "inferred", "public_estimate"]
 
@@ -35,6 +34,19 @@ class ResearchResult(TypedDict):
     notes: list[str]
 
 
+class MarketMetric(TypedDict):
+    market_name: str
+    cagr_percent: float
+    period_start_year: int
+    period_end_year: int
+    source_url: str
+    base_market_size: NotRequired[float]
+    base_year: NotRequired[int]
+    forecast_market_size: NotRequired[float]
+    forecast_year: NotRequired[int]
+    currency_and_unit: NotRequired[str]
+
+
 class Evaluation(TypedDict):
     technology: Technology
     criterion: str
@@ -45,6 +57,7 @@ class Evaluation(TypedDict):
     uncertainty: str | None
     basis_status: BasisStatus
     stakeholder_group: NotRequired[str]
+    market_metric: NotRequired[MarketMetric]
 
 
 class EvaluationResult(TypedDict):
