@@ -8,6 +8,7 @@ from kv_cache_eval.common.config import load_environment
 from kv_cache_eval.common.state import State, StateUpdate
 from kv_cache_eval.features.technical_research.infinigen.prompts import questions_for_state
 from kv_cache_eval.features.technical_research.infinigen.retriever import RetrievalSettings, ensure_index
+from kv_cache_eval.features.technical_research.infinigen.web import search_web
 from kv_cache_eval.features.technical_research.infinigen.workflow import ModelReviewer, research_questions
 
 
@@ -32,10 +33,21 @@ def research_infinigen(
     top_k: int = 5, max_attempts: int = 2, max_llm_calls: int = 18,
 ) -> StateUpdate:
     llm = make_runtime_llm()
-    retriever, _ = ensure_index(settings=settings)
+    retriever = None
+
+    def rag_search(query: str, count: int):
+        nonlocal retriever
+        if retriever is None:
+            retriever, _ = ensure_index(settings=settings)
+        return retriever.search(query, count)
+
+    def web_search(query: str, count: int):
+        return search_web(query, "InfiniGen", count)
+
     reviewer = ModelReviewer(llm, max_calls=max_llm_calls, target="InfiniGen")
     questions = questions_for_state(state, target="InfiniGen")
-    result = research_questions(questions, retriever, reviewer, target="InfiniGen", top_k=top_k,
-                                max_attempts=max_attempts, prior=state["infinigen_evidence"])
+    result = research_questions(questions, rag_search, reviewer, target="InfiniGen", top_k=top_k,
+                                max_attempts=max_attempts, prior=state["infinigen_evidence"],
+                                web_search=web_search)
     result["notes"].append(f"InfiniGen 조사: 질문 {len(questions)}개, LLM 호출 {reviewer.calls}/{max_llm_calls}, 외부 재조사 라운드 {state['research_round']}")
     return {"infinigen_evidence": result}
