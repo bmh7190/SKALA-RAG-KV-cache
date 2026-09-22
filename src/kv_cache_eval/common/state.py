@@ -26,6 +26,7 @@ class State(TypedDict):
     kivi_evidence: ResearchResult | None
     infinigen_evidence: ResearchResult | None
     market_evidence: ResearchResult | None
+    domain_evidence: ResearchResult | None
     maturity_eval: EvaluationResult | None
     market_eval: EvaluationResult | None
     stakeholder_eval: EvaluationResult | None
@@ -40,6 +41,7 @@ class StateUpdate(TypedDict, total=False):
     kivi_evidence: ResearchResult | None
     infinigen_evidence: ResearchResult | None
     market_evidence: ResearchResult | None
+    domain_evidence: ResearchResult | None
     maturity_eval: EvaluationResult | None
     market_eval: EvaluationResult | None
     stakeholder_eval: EvaluationResult | None
@@ -64,6 +66,7 @@ def new_state(max_research_rounds: int = 2) -> State:
         "kivi_evidence": None,
         "infinigen_evidence": None,
         "market_evidence": None,
+        "domain_evidence": None,
         "maturity_eval": None,
         "market_eval": None,
         "stakeholder_eval": None,

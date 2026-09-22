@@ -50,6 +50,7 @@ class Evaluation(TypedDict):
 class EvaluationResult(TypedDict):
     evaluations: list[Evaluation]
     notes: list[str]
+    text: NotRequired[str]  # 평가 전체를 설명하는 글. 기존 평가 노드는 생략 가능.
 
 
 class EvidenceGap(TypedDict):
