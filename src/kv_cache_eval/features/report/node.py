@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,9 @@ REPORT_SECTION_TITLES = (
 )
 
 DEFAULT_PDF_PATH = Path("outputs/kv_cache_evaluation_report.pdf")
+
+# 대괄호 안에 들어간 근거 ID 또는 잘못 생성된 근거 표시를 찾는다.
+BRACKET_PATTERN = re.compile(r"\[([^\[\]]+)\]")
 
 
 def _get_llm() -> ChatOpenAI:
@@ -52,7 +56,10 @@ def _get_llm() -> ChatOpenAI:
     )
 
 
-def _require_value(state: State, key: str) -> Any:
+def _require_value(
+    state: State,
+    key: str,
+) -> Any:
     """보고서 생성에 필요한 State 값이 존재하는지 확인한다."""
     value = state.get(key)
 
@@ -65,7 +72,9 @@ def _require_value(state: State, key: str) -> Any:
     return value
 
 
-def _collect_evidence(state: State) -> dict[str, Evidence]:
+def _collect_evidence(
+    state: State,
+) -> dict[str, Evidence]:
     """기술 조사와 시장성 조사 결과를 근거 ID 기준으로 정리한다."""
     evidence_by_id: dict[str, Evidence] = {}
 
@@ -88,40 +97,48 @@ def _collect_evidence(state: State) -> dict[str, Evidence]:
     return evidence_by_id
 
 
-def _format_reference(evidence: Evidence) -> str:
-    """Evidence를 REFERENCE에 사용할 문자열로 변환한다."""
-    evidence_id = evidence["id"]
-    technology = evidence["technology"]
+def _reference_key(
+    evidence: Evidence,
+) -> tuple[str, ...]:
+    """
+    동일한 문서에서 생성된 여러 Evidence를 하나의 참고문헌으로 묶는다.
+
+    URL이 있으면 URL을 우선 사용하고, URL이 없으면 기술명과 문서명을
+    이용해 동일 문서 여부를 판단한다.
+    """
     source = evidence["source"]
-
-    document = source.get("document") or "문서명 미확인"
-    url = source.get("url")
-    page = source.get("page")
-
-    parts = [f"[{evidence_id}] {technology}. {document}."]
-
-    if page is not None:
-        parts.append(f"p. {page}.")
+    url = str(source.get("url") or "").strip()
+    document = str(
+        source.get("document") or "문서명 미확인"
+    ).strip()
+    technology = str(evidence["technology"]).strip()
 
     if url:
-        parts.append(url)
-
-    limitations = evidence.get("limitations", [])
-
-    if limitations:
-        parts.append(
-            "근거 한계: " + "; ".join(str(item) for item in limitations)
+        return (
+            "url",
+            url.rstrip("/"),
         )
 
-    return " ".join(parts)
+    return (
+        "document",
+        technology.casefold(),
+        document.casefold(),
+    )
 
 
-def _build_reference_text(
+def _build_citation_index(
     cited_evidence_ids: list[str],
     evidence_by_id: dict[str, Evidence],
-) -> str:
-    """실제로 인용된 근거만 REFERENCE 문자열로 만든다."""
-    references: list[str] = []
+) -> tuple[dict[str, int], list[Evidence]]:
+    """
+    Evidence ID별 인용 번호와 중복 제거된 참고문헌 목록을 만든다.
+
+    같은 URL 또는 같은 문서에서 생성된 Evidence는 동일한 참고문헌
+    번호를 사용한다.
+    """
+    citation_numbers: dict[str, int] = {}
+    reference_number_by_key: dict[tuple[str, ...], int] = {}
+    reference_evidence: list[Evidence] = []
 
     for evidence_id in cited_evidence_ids:
         evidence = evidence_by_id.get(evidence_id)
@@ -129,26 +146,218 @@ def _build_reference_text(
         if evidence is None:
             continue
 
-        references.append(_format_reference(evidence))
+        reference_key = _reference_key(evidence)
+        reference_number = reference_number_by_key.get(reference_key)
 
-    if not references:
+        if reference_number is None:
+            reference_number = len(reference_evidence) + 1
+            reference_number_by_key[reference_key] = reference_number
+            reference_evidence.append(evidence)
+
+        citation_numbers[evidence_id] = reference_number
+
+    return citation_numbers, reference_evidence
+
+
+def _format_reference(
+    evidence: Evidence,
+    reference_number: int,
+) -> str:
+    """Evidence를 사람이 읽을 수 있는 참고문헌 문자열로 변환한다."""
+    technology = str(evidence["technology"]).strip()
+    source = evidence["source"]
+
+    document = str(
+        source.get("document") or "문서명 미확인"
+    ).strip()
+    url = str(source.get("url") or "").strip()
+    page = source.get("page")
+
+    parts = [
+        f"[{reference_number}]",
+        f"{technology}.",
+        f"{document}.",
+    ]
+
+    if not url and page is not None:
+        parts.append(f"p. {page}.")
+
+    if url:
+        parts.append(url)
+
+    return " ".join(parts)
+
+
+def _build_reference_text(
+    reference_evidence: list[Evidence],
+) -> str:
+    """중복이 제거된 Evidence를 REFERENCE 문자열로 만든다."""
+    if not reference_evidence:
         return "보고서에 인용된 확인 가능 근거가 없습니다."
 
-    return "\n".join(
-        f"{index}. {reference}"
-        for index, reference in enumerate(references, start=1)
+    references = [
+        _format_reference(
+            evidence=evidence,
+            reference_number=index,
+        )
+        for index, evidence in enumerate(
+            reference_evidence,
+            start=1,
+        )
+    ]
+
+    return "\n".join(references)
+
+
+def _extract_section_evidence_ids(
+    raw_report: ReportDraft,
+    evidence_by_id: dict[str, Evidence],
+) -> list[str]:
+    """본문에 실제로 표시된 유효한 근거 ID를 등장 순서대로 찾는다."""
+    extracted_ids: list[str] = []
+
+    for section in raw_report.get("sections", []):
+        if not isinstance(section, (list, tuple)):
+            continue
+
+        if len(section) != 2:
+            continue
+
+        content = str(section[1])
+
+        for bracket_content in BRACKET_PATTERN.findall(content):
+            evidence_id = bracket_content.strip()
+
+            if evidence_id not in evidence_by_id:
+                continue
+
+            if evidence_id in extracted_ids:
+                continue
+
+            extracted_ids.append(evidence_id)
+
+    return extracted_ids
+
+
+def _looks_like_invalid_citation(
+    bracket_content: str,
+) -> bool:
+    """
+    LLM이 생성한 근거 placeholder인지 판단한다.
+
+    일반적인 문서 제목 표현인 [ICML 2024] 등은 유지하고,
+    근거 ID처럼 보이거나 미확인 placeholder인 경우만 제거한다.
+    """
+    normalized = bracket_content.strip().casefold()
+
+    if ":" in normalized:
+        return True
+
+    if normalized.startswith("market-"):
+        return True
+
+    placeholder_keywords = (
+        "evidence",
+        "미확인",
+        "확인 필요",
+        "notes",
+        "stakeholder",
+        "project",
+        "source",
+        "citation",
+        "근거 id",
+        "trl notes",
     )
+
+    return any(
+        keyword in normalized
+        for keyword in placeholder_keywords
+    )
+
+
+def _merge_numbered_citations(
+    text: str,
+) -> str:
+    """연속된 번호 인용을 [1, 2] 형식으로 합친다."""
+    consecutive_pattern = re.compile(
+        r"(?:\[\d+\]\s*){2,}"
+    )
+
+    def replace_group(
+        match: re.Match[str],
+    ) -> str:
+        numbers = re.findall(
+            r"\d+",
+            match.group(0),
+        )
+
+        unique_numbers = list(dict.fromkeys(numbers))
+
+        return f"[{', '.join(unique_numbers)}]"
+
+    return consecutive_pattern.sub(
+        replace_group,
+        text,
+    ).strip()
+
+
+def _replace_internal_citations(
+    text: str,
+    citation_numbers: dict[str, int],
+) -> str:
+    """
+    본문의 내부 근거 ID를 사람이 읽는 번호 인용으로 변환한다.
+
+    검증되지 않은 내부 ID나 placeholder는 [근거 미확인]으로
+    표시한다.
+    """
+
+    def replace_match(
+        match: re.Match[str],
+    ) -> str:
+        bracket_content = match.group(1).strip()
+
+        # 이미 [1], [1, 2] 형태로 변환된 인용은 유지한다.
+        if re.fullmatch(
+            r"\d+(?:\s*,\s*\d+)*",
+            bracket_content,
+        ):
+            return match.group(0)
+
+        reference_number = citation_numbers.get(
+            bracket_content
+        )
+
+        if reference_number is not None:
+            return f"[{reference_number}]"
+
+        if _looks_like_invalid_citation(bracket_content):
+            return "[근거 미확인]"
+
+        # [ICML 2024]와 같은 일반적인 대괄호 표현은 유지한다.
+        return match.group(0)
+
+    converted = BRACKET_PATTERN.sub(
+        replace_match,
+        text,
+    )
+
+    return _merge_numbered_citations(converted)
 
 
 def _normalize_sections(
     raw_report: ReportDraft,
     reference_text: str,
+    citation_numbers: dict[str, int],
 ) -> list[tuple[str, str]]:
     """LLM 결과를 지정된 보고서 목차 순서로 정규화한다."""
     generated_sections: dict[str, str] = {}
 
     for section in raw_report.get("sections", []):
-        if not isinstance(section, (list, tuple)) or len(section) != 2:
+        if not isinstance(section, (list, tuple)):
+            continue
+
+        if len(section) != 2:
             continue
 
         title = str(section[0]).strip()
@@ -163,12 +372,27 @@ def _normalize_sections(
         if title == "REFERENCE":
             content = reference_text
         else:
-            content = generated_sections.get(title, "").strip()
+            content = generated_sections.get(
+                title,
+                "",
+            ).strip()
 
             if not content:
-                content = "해당 항목의 분석 결과가 생성되지 않았습니다."
+                content = (
+                    "해당 항목의 분석 결과가 생성되지 않았습니다."
+                )
 
-        normalized_sections.append((title, content))
+            content = _replace_internal_citations(
+                text=content,
+                citation_numbers=citation_numbers,
+            )
+
+        normalized_sections.append(
+            (
+                title,
+                content,
+            )
+        )
 
     return normalized_sections
 
@@ -179,8 +403,24 @@ def _normalize_report(
     evidence_by_id: dict[str, Evidence],
 ) -> ReportDraft:
     """보고서의 근거 ID와 섹션을 State 스키마에 맞게 정리한다."""
-    requested_ids = list(raw_report.get("cited_evidence_ids", []))
-    requested_ids.extend(synthesis.get("cited_evidence_ids", []))
+    requested_ids = _extract_section_evidence_ids(
+        raw_report=raw_report,
+        evidence_by_id=evidence_by_id,
+    )
+
+    requested_ids.extend(
+        raw_report.get(
+            "cited_evidence_ids",
+            [],
+        )
+    )
+
+    requested_ids.extend(
+        synthesis.get(
+            "cited_evidence_ids",
+            [],
+        )
+    )
 
     cited_ids = [
         evidence_id
@@ -188,14 +428,21 @@ def _normalize_report(
         if evidence_id in evidence_by_id
     ]
 
+    citation_numbers, reference_evidence = (
+        _build_citation_index(
+            cited_evidence_ids=cited_ids,
+            evidence_by_id=evidence_by_id,
+        )
+    )
+
     reference_text = _build_reference_text(
-        cited_evidence_ids=cited_ids,
-        evidence_by_id=evidence_by_id,
+        reference_evidence=reference_evidence,
     )
 
     sections = _normalize_sections(
         raw_report=raw_report,
         reference_text=reference_text,
+        citation_numbers=citation_numbers,
     )
 
     return {
@@ -204,15 +451,24 @@ def _normalize_report(
     }
 
 
-def _paragraph_text(text: str) -> str:
+def _paragraph_text(
+    text: str,
+) -> str:
     """ReportLab Paragraph에서 안전하게 표시할 문자열로 변환한다."""
     escaped_text = escape(text)
-    return escaped_text.replace("\n", "<br/>")
+
+    return escaped_text.replace(
+        "\n",
+        "<br/>",
+    )
 
 
 def _resolve_pdf_path() -> Path:
     """환경변수가 있으면 해당 경로를, 없으면 기본 경로를 사용한다."""
-    configured_path = os.getenv("REPORT_PDF_PATH", "").strip()
+    configured_path = os.getenv(
+        "REPORT_PDF_PATH",
+        "",
+    ).strip()
 
     if configured_path:
         return Path(configured_path).expanduser()
@@ -220,18 +476,49 @@ def _resolve_pdf_path() -> Path:
     return DEFAULT_PDF_PATH
 
 
-def _write_pdf(report: ReportDraft, output_path: Path) -> None:
+def _resolve_font_path() -> Path:
+    """프로젝트에 포함된 한글 폰트 파일의 경로를 반환한다."""
+    configured_path = os.getenv(
+        "REPORT_FONT_PATH",
+        "",
+    ).strip()
+
+    if configured_path:
+        font_path = Path(configured_path).expanduser()
+    else:
+        font_path = (
+            Path(__file__).resolve().parents[4]
+            / "assets"
+            / "fonts"
+            / "NanumGothic.ttf"
+        )
+
+    if not font_path.exists():
+        raise FileNotFoundError(
+            "한글 PDF 생성을 위한 폰트 파일을 찾을 수 없습니다: "
+            f"{font_path}"
+        )
+
+    return font_path
+
+
+def _write_pdf(
+    report: ReportDraft,
+    output_path: Path,
+) -> None:
     """구조화된 보고서를 한글 PDF 파일로 저장한다."""
     try:
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.styles import (
+            ParagraphStyle,
+            getSampleStyleSheet,
+        )
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (
-            PageBreak,
             Paragraph,
             SimpleDocTemplate,
             Spacer,
@@ -243,12 +530,21 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
             "실행하십시오."
         ) from exc
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    # ReportLab에서 제공하는 한국어 CID 폰트를 사용한다.
-    # 운영체제별 로컬 폰트 경로에 의존하지 않도록 설정한다.
-    font_name = "HYSMyeongJo-Medium"
-    pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    font_path = _resolve_font_path()
+    font_name = "NanumGothic"
+
+    if font_name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(
+            TTFont(
+                font_name,
+                str(font_path),
+            )
+        )
 
     document = SimpleDocTemplate(
         str(output_path),
@@ -271,7 +567,18 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         leading=26,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#1F2937"),
-        spaceAfter=12,
+        spaceAfter=6,
+    )
+
+    subtitle_style = ParagraphStyle(
+        name="KoreanSubtitle",
+        parent=styles["BodyText"],
+        fontName=font_name,
+        fontSize=11,
+        leading=17,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#4B5563"),
+        spaceAfter=10,
     )
 
     summary_title_style = ParagraphStyle(
@@ -296,6 +603,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         textColor=colors.HexColor("#1F2937"),
         spaceBefore=12,
         spaceAfter=8,
+        keepWithNext=True,
     )
 
     body_style = ParagraphStyle(
@@ -304,8 +612,9 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         fontName=font_name,
         fontSize=9.5,
         leading=16,
-        alignment=TA_JUSTIFY,
+        alignment=TA_LEFT,
         wordWrap="CJK",
+        textColor=colors.HexColor("#111827"),
         spaceAfter=8,
     )
 
@@ -315,6 +624,7 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         fontSize=8.5,
         leading=14,
         alignment=TA_LEFT,
+        textColor=colors.HexColor("#374151"),
     )
 
     story = [
@@ -324,29 +634,33 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         ),
         Paragraph(
             "KIVI와 InfiniGen 비교",
-            body_style,
+            subtitle_style,
         ),
-        Spacer(1, 6 * mm),
+        Spacer(
+            1,
+            5 * mm,
+        ),
     ]
 
-    for index, (section_title, section_content) in enumerate(
-        report["sections"]
-    ):
+    for section_title, section_content in report["sections"]:
         if section_title == "SUMMARY":
             heading = summary_title_style
             content_style = body_style
         elif section_title == "REFERENCE":
-            # REFERENCE는 보고서 마지막 장에서 시작한다.
-            if index > 0:
-                story.append(PageBreak())
-
+            # 강제 PageBreak를 사용하지 않고 한계점 뒤에 이어서 출력한다.
             heading = heading_style
             content_style = reference_style
         else:
             heading = heading_style
             content_style = body_style
 
-        story.append(Paragraph(escape(section_title), heading))
+        story.append(
+            Paragraph(
+                escape(section_title),
+                heading,
+            )
+        )
+
         story.append(
             Paragraph(
                 _paragraph_text(section_content),
@@ -355,20 +669,40 @@ def _write_pdf(report: ReportDraft, output_path: Path) -> None:
         )
 
         if section_title == "SUMMARY":
-            # SUMMARY는 프롬프트에서 500~700자로 제한하고,
-            # 이후 본문과 시각적으로 구분한다.
-            story.append(Spacer(1, 5 * mm))
+            story.append(
+                Spacer(
+                    1,
+                    4 * mm,
+                )
+            )
 
     document.build(story)
 
 
-def write_report(state: State) -> StateUpdate:
+def write_report(
+    state: State,
+) -> StateUpdate:
     """종합 결과와 근거를 이용해 최종 보고서와 PDF를 생성한다."""
-    synthesis = _require_value(state, "synthesis")
-    maturity_eval = _require_value(state, "maturity_eval")
-    market_eval = _require_value(state, "market_eval")
-    stakeholder_eval = _require_value(state, "stakeholder_eval")
-    domain_eval = _require_value(state, "domain_eval")
+    synthesis = _require_value(
+        state,
+        "synthesis",
+    )
+    maturity_eval = _require_value(
+        state,
+        "maturity_eval",
+    )
+    market_eval = _require_value(
+        state,
+        "market_eval",
+    )
+    stakeholder_eval = _require_value(
+        state,
+        "stakeholder_eval",
+    )
+    domain_eval = _require_value(
+        state,
+        "domain_eval",
+    )
 
     evidence_by_id = _collect_evidence(state)
 
@@ -404,11 +738,13 @@ def write_report(state: State) -> StateUpdate:
 4. 입력에 존재하지 않는 도입 사례나 성능 수치를 만들지 마십시오.
 5. 근거를 사용할 때는 문장에 [근거 ID] 형식으로 표시하십시오.
 6. 제공된 evidence에 없는 근거 ID를 만들지 마십시오.
-7. 공개 자료 기반 TRL은 추정이라는 점을 명시하십시오.
-8. 논문 환경과 실제 운영 환경의 차이를 한계에 포함하십시오.
-9. REFERENCE 내용은 코드에서 실제 인용 근거로 다시 작성하므로,
-   임의의 자료를 추가하지 마십시오.
-10. 모든 본문은 한국어로 작성하십시오.
+7. [project evidence], [TRL notes], [stakeholder 미확인]과 같은
+   임시 근거 표시를 절대 생성하지 마십시오.
+8. 공개 자료 기반 TRL은 추정이라는 점을 명시하십시오.
+9. 논문 환경과 실제 운영 환경의 차이를 한계에 포함하십시오.
+10. REFERENCE 내용은 코드에서 실제 인용 근거로 다시 작성하므로,
+    임의의 자료를 추가하지 마십시오.
+11. 모든 본문은 한국어로 작성하십시오.
 
 보고서 섹션은 반드시 다음 순서와 정확한 제목을 사용하십시오.
 1. SUMMARY
@@ -442,11 +778,17 @@ ReportDraft 구조에 맞춰 다음 값을 생성하십시오.
 - cited_evidence_ids: 보고서 작성에 실제 사용한 근거 ID 목록
 """
 
-    structured_llm = _get_llm().with_structured_output(ReportDraft)
+    structured_llm = _get_llm().with_structured_output(
+        ReportDraft,
+        method="function_calling",
+    )
+
     raw_report = structured_llm.invoke(prompt)
 
     if not isinstance(raw_report, dict):
-        raise TypeError("LLM이 ReportDraft 형식의 결과를 반환하지 않았습니다.")
+        raise TypeError(
+            "LLM이 ReportDraft 형식의 결과를 반환하지 않았습니다."
+        )
 
     report = _normalize_report(
         raw_report=raw_report,
@@ -455,6 +797,12 @@ ReportDraft 구조에 맞춰 다음 값을 생성하십시오.
     )
 
     pdf_path = _resolve_pdf_path()
-    _write_pdf(report=report, output_path=pdf_path)
 
-    return {"report": report}
+    _write_pdf(
+        report=report,
+        output_path=pdf_path,
+    )
+
+    return {
+        "report": report,
+    }
