@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from kv_cache_eval.common.state import State
 from kv_cache_eval.common.tasks import EVALUATION_KEYS
+from kv_cache_eval.features.report.feedback import issue_sections
 from kv_cache_eval.features.supervisor.catalog import CRITERIA
 from kv_cache_eval.features.supervisor.evidence_policy import (
     check_evidence,
@@ -117,13 +118,7 @@ def _dispatch_report_stage(state, completed):
             state, "quality", "현재 보고서 버전에 대한 품질 판정이 필요합니다"
         )
     if not quality["passed"]:
-        sections = list(
-            dict.fromkeys(
-                issue["section"]
-                for issue in quality["issues"]
-                if issue["section"] in CRITERIA["report"]
-            )
-        )
+        sections = issue_sections(quality["issues"])
         reason = "; ".join(issue["required_action"] for issue in quality["issues"])
         return dispatch(
             state,

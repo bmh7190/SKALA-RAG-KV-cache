@@ -59,8 +59,18 @@ def judge(coverage="pass"):
             name: {
                 "status": coverage if name == "perspective_coverage" else "pass",
                 "reason": "오프라인 검증용",
-                "section": "4. 관점별 평가 결과",
-                "required_action": "누락 관점 보완",
+                "findings": [
+                    {
+                        "section": "4. 관점별 평가 결과",
+                        "kind": "missing_content",
+                        "quote": "",
+                        "evidence_ids": [],
+                        "reason": "누락 관점",
+                        "required_action": "누락 관점 보완",
+                    }
+                ]
+                if name == "perspective_coverage" and coverage != "pass"
+                else [],
             }
             for name in CRITERIA
         }

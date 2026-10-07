@@ -3,7 +3,7 @@
 from kv_cache_eval.common.tasks import EVALUATION_KEYS
 from kv_cache_eval.features.domain.rubric import DOMAIN_RUBRIC
 from kv_cache_eval.features.market.rubric import MARKET_CRITERIA
-from kv_cache_eval.features.report.node import REPORT_SECTION_TITLES
+from kv_cache_eval.features.report.sections import REPORT_SECTION_TITLES
 from kv_cache_eval.features.stakeholders.criteria import STAKEHOLDER_CRITERIA
 from kv_cache_eval.features.technical_research.prompts import QUESTION_TEMPLATES
 
