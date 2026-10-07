@@ -18,7 +18,7 @@ from kv_cache_eval.features.supervisor.execution import worker
 from kv_cache_eval.features.supervisor.node import supervise
 from kv_cache_eval.features.synthesis.node import synthesize
 from kv_cache_eval.features.technical_research.node import research
-from kv_cache_eval.graph.gates import validate_input
+from kv_cache_eval.graph.validation import validate_input
 
 Node = Callable[[State], StateUpdate]
 

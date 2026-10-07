@@ -148,9 +148,9 @@ flowchart TB
 ├── main.py                       # 전체 실행
 ├── src/kv_cache_eval/
 │   ├── common/                   # State·스키마·설정·공통 근거 처리
-│   ├── graph/                    # runner: 실행·재개 / workflow: 연결 / gates: 근거 검사
+│   ├── graph/                    # runner: 실행·재개 / workflow: 연결 / validation: 입력 검증
 │   └── features/
-│       ├── supervisor/           # 다음 작업 선택·상태 전이·재시도
+│       ├── supervisor/           # 다음 작업 선택·근거 판단·상태 전이·재시도
 │       ├── technical_research/   # PDF RAG·웹 조사
 │       ├── maturity/ · market/   # 성숙도·시장성 평가
 │       ├── stakeholders/ · domain/ # 이해관계자·도메인 평가

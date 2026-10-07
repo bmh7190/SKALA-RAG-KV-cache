@@ -5,13 +5,16 @@ from copy import deepcopy
 from kv_cache_eval.common.state import State
 from kv_cache_eval.common.tasks import EVALUATION_KEYS
 from kv_cache_eval.features.supervisor.catalog import CRITERIA
+from kv_cache_eval.features.supervisor.evidence_policy import (
+    check_evidence,
+    research_gaps,
+)
 from kv_cache_eval.features.supervisor.retries import failed_work, retry_gap
 from kv_cache_eval.features.supervisor.transitions import (
     accept_result,
     dispatch,
     finish,
 )
-from kv_cache_eval.graph.gates import check_evidence, research_gaps
 
 
 def supervise(input_state: State) -> State:

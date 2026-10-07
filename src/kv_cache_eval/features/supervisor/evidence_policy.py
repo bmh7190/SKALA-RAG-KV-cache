@@ -1,16 +1,8 @@
-"""Evidence sufficiency checks used by the Supervisor, without model calls."""
+"""Supervisor의 근거 충분성 판단 정책. 모델 호출 없이 진행 가능 여부를 확인한다."""
 
 from kv_cache_eval.common.evidence import collect_evidence
 from kv_cache_eval.common.tasks import EVALUATION_KEYS, criteria, technologies
 from kv_cache_eval.features.supervisor.catalog import CRITERIA
-
-
-def validate_input(state):
-    if tuple(state["selected_technologies"]) != ("KIVI", "InfiniGen"):
-        raise ValueError("현재 그래프는 KIVI와 InfiniGen 비교용입니다")
-    if not state["domain_and_criteria"]["domain"].strip():
-        raise ValueError("평가 도메인이 필요합니다")
-    return {}
 
 
 def supported(row, evidence):
