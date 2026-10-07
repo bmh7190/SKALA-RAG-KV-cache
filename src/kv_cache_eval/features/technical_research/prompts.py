@@ -60,6 +60,12 @@ def questions_for_state(state: State, target: str, user_question: str | None = N
     questions = [ResearchQuestion(item.id, f"{item.text.format(target=target)} 적용 도메인: {domain}"
                                   + ("." + request if request else ""), item.route)
                  for item in QUESTION_TEMPLATES]
+    request_scope = state.get("retry_request")
+    if request_scope:
+        from kv_cache_eval.common.tasks import criteria
+        selected = criteria(state, [item.id for item in QUESTION_TEMPLATES])
+        return [ResearchQuestion(q.id, q.text + " 보완 사유: " + request_scope["reason"],
+                                q.route, q.category) for q in questions if q.id in selected]
     gap_questions = []
     for index, gap in enumerate(state.get("evidence_gaps") or []):
         if gap["technology"] in (None, target):

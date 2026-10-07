@@ -2,27 +2,15 @@
 
 from __future__ import annotations
 
-import os
 
-from kv_cache_eval.common.config import load_environment
+from kv_cache_eval.common.tasks import technologies
 from kv_cache_eval.common.schemas import ResearchResult, Technology
 from kv_cache_eval.common.state import State, StateUpdate
 
 
 def make_runtime_llm():
-    """설정한 생성 모델만 사용하며 키 값은 출력하지 않는다."""
-    load_environment()
-    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
-    model = os.getenv("LLM_MODEL", "").strip()
-    if not provider or not model:
-        raise RuntimeError("LLM_PROVIDER와 LLM_MODEL을 .env 또는 셸에 설정하세요")
-    if provider != "openai":
-        raise RuntimeError("현재 구현된 생성 LLM 제공자는 openai뿐입니다")
-    if not os.getenv("OPENAI_API_KEY", "").strip():
-        raise RuntimeError("OPENAI_API_KEY가 필요합니다. 값은 출력하지 않습니다")
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI(model=model, max_retries=0, timeout=45)
+    from kv_cache_eval.common.llm import chat_model
+    return chat_model(timeout=90)
 
 
 def research_technology(
@@ -67,7 +55,7 @@ def research_technology(
 def research(state: State, *, user_question: str | None = None) -> StateUpdate:
     """한 Graph 노드에서 선정 기술 모두를 같은 조사 엔진으로 처리한다."""
     updates: StateUpdate = {}
-    for technology in state["selected_technologies"]:
+    for technology in technologies(state):
         key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
         updates[key] = research_technology(state, technology, user_question=user_question)
     return updates

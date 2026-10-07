@@ -260,7 +260,7 @@ def research_questions(
 
     # 같은 발췌를 재조사해도 이전 근거 ID를 보존해 평가의 기존 인용을 끊지 않는다.
     evidence = {origin(item): item for item in prior_evidence}
-    notes = list((prior or {}).get("notes", [])) if len(prior_evidence) == len((prior or {}).get("evidence", [])) else []
+    notes = []  # Prior evidence is retained; old search logs belong in traces, not each new prompt.
     for question_index, question in enumerate(questions):
         try:
             result = graph.invoke({

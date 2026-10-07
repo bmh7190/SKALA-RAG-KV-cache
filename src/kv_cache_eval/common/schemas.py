@@ -70,3 +70,54 @@ class Synthesis(TypedDict):
 class ReportDraft(TypedDict):
     sections: list[tuple[str, str]]  # SUMMARY로 시작, REFERENCE로 끝나야 한다.
     cited_evidence_ids: list[str]
+
+
+AgentName = Literal[
+    'technical_research', 'maturity', 'market', 'stakeholders', 'domain',
+    'synthesis', 'report', 'quality', 'export_pdf',
+]
+
+
+class RetryRequest(TypedDict):
+    technology: Technology | None
+    criteria: list[str]
+    reason: str
+
+
+class AgentError(TypedDict):
+    code: str
+    message: str
+    retryable: bool
+
+
+class AgentExecution(TypedDict):
+    agent: AgentName
+    step: int
+    status: Literal['completed', 'needs_evidence', 'failed']
+    gaps: list[EvidenceGap]
+    error: AgentError | None
+
+
+QualityCriterion = Literal['groundedness', 'neutrality', 'bias_control', 'perspective_coverage']
+CheckStatus = Literal['pass', 'fail', 'unknown']
+
+
+class QualityIssue(TypedDict):
+    criterion: QualityCriterion
+    section: str
+    reason: str
+    required_action: str
+
+
+class QualityResult(TypedDict):
+    report_revision: int
+    passed: bool
+    checks: dict[QualityCriterion, CheckStatus]
+    reasons: dict[QualityCriterion, str]
+    issues: list[QualityIssue]
+
+
+class EvidenceDecision(TypedDict):
+    ready: bool
+    reason: str
+    blocking_gaps: list[EvidenceGap]

@@ -5,6 +5,9 @@ from collections.abc import Mapping
 from typing import NamedTuple
 
 from kv_cache_eval.common.config import load_environment
+from kv_cache_eval.common.llm import chat_model
+from kv_cache_eval.common.tasks import technologies, criteria, merge_evaluation, merge_research
+from kv_cache_eval.features.market.rubric import MARKET_CRITERIA
 from kv_cache_eval.common.schemas import Technology
 from kv_cache_eval.common.state import State, StateUpdate
 from kv_cache_eval.features.market.analysis import Analyse, MarketAnalysis, materialize_analysis, merge_results
@@ -31,9 +34,7 @@ def validate_runtime_config(environment: Mapping[str, str]) -> MarketRuntimeConf
 
 
 def _openai_analyst(config: MarketRuntimeConfig) -> Analyse:
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(model=config.model, temperature=0)
+    llm = chat_model()
     structured = llm.with_structured_output(MarketAnalysis, method="json_schema", strict=True)
 
     def analyse(technology: Technology, hits):
@@ -63,12 +64,15 @@ def build_market_node(search: Search, analyse: Analyse):
     """테스트와 공급자 교체가 가능하도록 의존성을 주입한 노드를 만든다."""
     def node(state: State) -> StateUpdate:
         results = []
-        for technology in state["selected_technologies"]:
+        selected = criteria(state, MARKET_CRITERIA)
+        for technology in technologies(state):
             hits = collect_market_sources(search, technology)
             analysis = analyse(technology, hits)
             results.append(materialize_analysis(technology, hits, analysis))
         research, evaluation = merge_results(results)
-        return {"market_evidence": research, "market_eval": evaluation}
+        evaluation["evaluations"] = [row for row in evaluation["evaluations"] if row["criterion"] in selected]
+        return {"market_evidence": merge_research(state.get("market_evidence"), research),
+                "market_eval": merge_evaluation(state, "market_eval", evaluation)}
 
     return node
 

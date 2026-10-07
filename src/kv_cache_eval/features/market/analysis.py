@@ -82,7 +82,7 @@ def _checked_urls(
     """
     LLM이 인용한 URL 중 실제 검색 결과에 포함된 URL만 반환한다.
 
-    검색 결과에 없는 URL은 예외를 발생시키지 않고 제외한다.
+    검색 결과에 없는 URL은 검증 오류로 반환한다.
     """
     checked: list[str] = []
 
@@ -90,7 +90,7 @@ def _checked_urls(
         url = canonical_url(raw_url)
 
         if url not in hits_by_url:
-            continue
+            raise ValueError(f"검색 결과에 없는 URL: {url}")
 
         if url not in checked:
             checked.append(url)
@@ -115,7 +115,7 @@ def _checked_supports(
         url = canonical_url(support.source_url)
 
         if url not in hits_by_url:
-            continue
+            raise ValueError(f"검색 결과에 없는 URL: {url}")
 
         unique_key = (
             support.kind,
@@ -185,7 +185,7 @@ def materialize_analysis(
     """
     LLM 출력을 검증하고 공통 State 자료형으로 변환한다.
 
-    검색 결과에 없는 URL은 제외하며, 유효한 근거가 남지 않으면
+    검색 결과 밖 URL은 거부하며, 유효한 근거가 없으면
     해당 평가는 unverified 상태가 된다.
     """
     hits_by_url = {

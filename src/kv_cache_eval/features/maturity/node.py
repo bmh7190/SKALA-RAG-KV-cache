@@ -1,6 +1,7 @@
 """기술별 확인 근거가 보여 주는 검증 수준으로 공개 TRL을 추정한다."""
 
 import re
+from kv_cache_eval.common.tasks import technologies, criteria, merge_evaluation
 
 from kv_cache_eval.common.schemas import Evidence, Evaluation, ResearchResult, Technology
 from kv_cache_eval.common.state import State, StateUpdate
@@ -154,10 +155,11 @@ def evaluate(state: State) -> StateUpdate:
     }
     evaluations: list[Evaluation] = []
     notes: list[str] = []
-    for technology in state["selected_technologies"]:
+    criteria(state, ["기술 성숙도(TRL)"])
+    for technology in technologies(state):
         evaluation, technology_notes = _evaluate_one_technology(
             technology, research_by_technology[technology],
         )
         evaluations.append(evaluation)
         notes.extend(technology_notes)
-    return {"maturity_eval": {"evaluations": evaluations, "notes": notes}}
+    return {"maturity_eval": merge_evaluation(state, "maturity_eval", {"evaluations": evaluations, "notes": notes})}

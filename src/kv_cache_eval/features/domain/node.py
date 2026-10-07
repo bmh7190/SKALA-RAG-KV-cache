@@ -1,6 +1,7 @@
 """근거 수집 → 평가 초안 → 근거 검토 → 수치 채점. 인용 근거와 평가를 반환한다."""
 
 import json
+from kv_cache_eval.common.tasks import technologies as target_technologies, criteria, merge_evaluation, domain_references, InputBudgetExceeded
 from copy import deepcopy
 
 from kv_cache_eval.common.state import State, StateUpdate
@@ -15,7 +16,7 @@ from kv_cache_eval.features.domain.runtime import DomainConfigurationError, invo
 
 TECHNOLOGIES = ("KIVI", "InfiniGen")
 # 양쪽 요청(초안/검토)의 UTF-8 바이트 수를 각각 제한한다. 모델 한도에 맞게 조절 가능하다.
-DEFAULT_MAX_INPUT_BYTES = 32000
+DEFAULT_MAX_INPUT_BYTES = 131072
 MAX_REVIEW_DRAFT_BYTES = 4000
 ALIASES = {"GPU 메모리": "GPU 메모리 사용량", "지연시간": "추론 지연시간", "운영 난이도": "적용·운영 난이도"}
 
@@ -67,12 +68,12 @@ def _finish(rows, notes, by_id=None):
         summary.append("근거·판단 미확인 항목: " + ", ".join(missing))
     if pending_scores:
         summary.append("판단 근거는 있으나 점수 미확인인 항목: " + ", ".join(pending_scores))
-    evaluations = [rows[(tech, criterion)] for tech in TECHNOLOGIES for criterion in DOMAIN_RUBRIC]
+    evaluations = list(rows.values())
     cited_ids = dict.fromkeys(eid for item in evaluations if item["basis_status"] != "unverified"
                               for eid in item["evidence_ids"])
     evidence = [by_id[eid] for eid in cited_ids if by_id is not None and eid in by_id]
     paragraphs = []
-    for tech in TECHNOLOGIES:
+    for tech in dict.fromkeys(key[0] for key in rows):
         confirmed = [item for item in evaluations
                      if item["technology"] == tech and item["basis_status"] != "unverified"]
         if not confirmed:
@@ -148,6 +149,8 @@ def _collect(state):
     by_id, conflicts, research_notes, notes = {}, set(), {}, []
     blocked, unavailable = set(), {}
     for technology, key in (("KIVI", "kivi_evidence"), ("InfiniGen", "infinigen_evidence")):
+        if technology not in target_technologies(state):
+            continue
         research = state.get(key)
         research_notes[technology] = []
         if research is None:
@@ -214,7 +217,7 @@ def _collect(state):
     for technology in blocked:
         warning = "근거 충돌 또는 근거·제약사항 형식 오류가 있어 재조사 전 해당 기술 평가를 보류합니다."
         notes.append(f"{technology}: {warning}")
-    for technology in TECHNOLOGIES:
+    for technology in target_technologies(state):
         if technology not in blocked and not any(item["technology"] == technology for item in by_id.values()):
             unavailable.setdefault(technology, "사용할 수 있는 근거가 없습니다. 출처 확인 상태·근거 ID·내용을 확인해야 합니다.")
     return by_id, research_notes, notes, blocked, unavailable
@@ -421,10 +424,11 @@ def _review_batches(payload, candidates, limit, rows, notes):
 
 
 @evaluation_settings()
-def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) -> StateUpdate:
+def _evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) -> StateUpdate:
     """근거 부족은 미확인으로 반환하고, 설정 오류는 재검색 대신 명시적으로 알린다."""
+    selected_criteria = criteria(state, DOMAIN_RUBRIC)
     rows = {(tech, criterion): _unknown(tech, criterion, "확인된 평가 근거 없음")
-            for tech in TECHNOLOGIES for criterion in DOMAIN_RUBRIC}
+            for tech in target_technologies(state) for criterion in selected_criteria}
     notes = []
     if type(max_input_bytes) is not int or max_input_bytes <= 0:
         raise DomainConfigurationError("max_input_bytes는 양의 정수여야 합니다")
@@ -438,10 +442,10 @@ def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) ->
         domain = settings["domain"]
         by_id, research_notes, notes, blocked, unavailable = _collect(state)
         for tech, reason in unavailable.items():
-            for criterion in DOMAIN_RUBRIC:
+            for criterion in selected_criteria:
                 rows[(tech, criterion)] = _unknown(tech, criterion, reason)
         for tech in blocked:
-            for criterion in DOMAIN_RUBRIC:
+            for criterion in selected_criteria:
                 rows[(tech, criterion)] = _unknown(tech, criterion, "근거 충돌 또는 근거·제약사항 형식 오류로 해당 기술의 재조사 필요")
         usable = {eid: item for eid, item in by_id.items() if item["technology"] not in blocked}
         if not usable:
@@ -449,6 +453,7 @@ def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) ->
             return _finish(rows, notes, by_id)
         technologies = [tech for tech in TECHNOLOGIES if any(item["technology"] == tech for item in usable.values())]
         combined = _payload(domain, technologies, usable, research_notes)
+        combined["rubric"] = {key: DOMAIN_RUBRIC[key] for key in selected_criteria}
         if _fits(combined, max_input_bytes):
             payloads = [combined]
         else:
@@ -456,13 +461,18 @@ def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) ->
             payloads = []
             for tech in technologies:
                 payload = _payload(domain, [tech], usable, research_notes)
+                payload["rubric"] = combined["rubric"]
                 if _fits(payload, max_input_bytes):
                     payloads.append(payload)
                 else:
+                    if state.get("next_agent") == "domain":
+                        raise InputBudgetExceeded("평가 근거가 입력 한도를 초과했습니다")
                     notes.append(f"input_budget_exceeded: {tech} 전체 근거와 검토 여유분이 한도 초과")
-                    for criterion in DOMAIN_RUBRIC:
+                    for criterion in selected_criteria:
                         rows[(tech, criterion)] = _unknown(tech, criterion, "전체 근거가 입력 한도 초과; 관련 문서 범위 축소 또는 한도 조정 필요")
     except Exception as exc:
+        if state.get("next_agent") == "domain":
+            raise
         reason = f"input_error: {type(exc).__name__}; 도메인 및 조사 결과 형식 확인 필요"
         notes.append(reason)
         return _finish({key: _unknown(*key, reason) for key in rows}, notes)
@@ -476,6 +486,8 @@ def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) ->
             # 공용 그래프는 미확인을 근거 부족으로 판단하므로 설정 오류를 그 경로로 보내지 않는다.
             raise
         except Exception as exc:
+            if state.get("next_agent") == "domain":
+                raise
             reason = f"execution_error (assessment): {type(exc).__name__}; 연결 또는 응답 확인 후 재실행 필요"
             notes.append(reason)
             for key in rows:
@@ -492,8 +504,18 @@ def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) ->
             except DomainConfigurationError:
                 raise
             except Exception as exc:
+                if state.get("next_agent") == "domain":
+                    raise
                 reason = f"execution_error (verification): {type(exc).__name__}; 검토 응답 확인 후 재실행 필요"
                 notes.append(reason)
                 for key in batch:
                     rows[key] = _unknown(*key, reason)
     return _finish(rows, notes, by_id)
+
+
+def evaluate(state: State, *, max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES) -> StateUpdate:
+    result = _evaluate(state, max_input_bytes=max_input_bytes)
+    if state.get("retry_request"):
+        result["domain_eval"] = merge_evaluation(state, "domain_eval", result["domain_eval"])
+        result["domain_evidence"] = domain_references(state, result["domain_eval"])
+    return result
