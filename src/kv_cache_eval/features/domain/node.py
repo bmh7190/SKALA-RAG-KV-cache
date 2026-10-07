@@ -459,13 +459,16 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
         reason = review.get("reason")
         if (
             key in duplicates
-            or review.get("supported") is not True
+            or type(review.get("supported")) is not bool
             or not _text(reason)
         ):
             rows[key] = _response_error(
                 *key,
                 f"근거 검토 미통과: {reason if _text(reason) else '검토 결과 없음 또는 중복'}",
             )
+            continue
+        if not review["supported"]:
+            rows[key] = _unknown(*key, f"근거 검토 미통과: {reason}")
             continue
         ids = candidate["evidence_ids"]
         score, judgment, rationale = (

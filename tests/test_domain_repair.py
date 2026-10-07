@@ -191,7 +191,7 @@ class DomainRepairTests(unittest.TestCase):
         self.assertEqual(row["basis_status"], "inferred")
         self.assertIsNone(row["score"])
 
-    def test_unsupported_claim_can_be_rewritten_as_explicit_gap(self):
+    def test_valid_citation_with_unsupported_judgment_is_evidence_gap(self):
         drafts = 0
 
         def invoke(messages, schema):
@@ -215,5 +215,5 @@ class DomainRepairTests(unittest.TestCase):
             side_effect=structured_fake(invoke),
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})
-        self.assertEqual(llm.call_count, 3)
+        self.assertEqual(llm.call_count, 2)
         self.assertEqual(result["last_result"]["status"], "needs_evidence")
