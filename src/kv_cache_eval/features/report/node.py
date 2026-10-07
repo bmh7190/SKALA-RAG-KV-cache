@@ -22,27 +22,16 @@ from kv_cache_eval.features.report.factual_checks import (
     FACTUAL_RULES,
     collect_report_evidence,
 )
-from kv_cache_eval.features.report.pdf import _resolve_pdf_path, _write_pdf
-
-REPORT_SECTION_TITLES = (
-    "SUMMARY",
-    "1. 분석 배경",
-    "2. 기술 선정 및 개요",
-    "3. 평가 기준 및 방법",
-    "4. 관점별 평가 결과",
-    "5. 종합 평가 및 시사점",
-    "6. 한계점",
-    "REFERENCE",
+from kv_cache_eval.features.report.feedback import (
+    ReportValidationError,
+    apply_revision,
+    issue_sections,
 )
+from kv_cache_eval.features.report.pdf import _resolve_pdf_path, _write_pdf
+from kv_cache_eval.features.report.sections import REPORT_SECTION_TITLES
 
 # 줄바꿈은 문단·목록 경계일 수 있으므로 같은 줄의 연속 인용만 묶는다.
 NUMBERED_CITATION_GROUP = re.compile(r"\[\d+\](?:[ \t]*\[\d+\])+")
-
-
-class ReportValidationError(AgentFailure):
-    """Safe, locally constructed feedback; never contains provider request bodies."""
-
-    expose_message = True
 
 
 class Section(BaseModel):
@@ -76,7 +65,7 @@ BODY_FIELDS = (
 )
 
 
-def cited_report_schema(evidence):
+def cited_report_schema(evidence, *, fields=BODY_FIELDS):
     """Let the model select verified IDs; code owns headings and inline citations."""
     if not evidence:
         raise ReportValidationError("보고서 작성에 사용할 검증된 근거가 없습니다.")
@@ -89,14 +78,19 @@ def cited_report_schema(evidence):
     return create_model(
         "CitedReport",
         cover=(CoverOutput, ...),
-        **{name: (list[paragraph], Field(min_length=1)) for name in BODY_FIELDS},
+        **{name: (list[paragraph], Field(min_length=1)) for name in fields},
     )
 
 
-def materialize_cited_report(result):
+def materialize_cited_report(result, previous_report=None):
     sections = []
     cited = []
     for name, title in zip(BODY_FIELDS, REPORT_SECTION_TITLES[:-1], strict=True):
+        if not hasattr(result, name):
+            text = dict(previous_report["sections"])[title]
+            sections.append(Section(title=title, content=text))
+            cited.extend(value.strip() for value in CITATION.findall(text))
+            continue
         texts = []
         for paragraph in getattr(result, name):
             ids = list(dict.fromkeys(paragraph.evidence_ids))
@@ -118,8 +112,10 @@ subtitle은 선정 기술명을 중심으로 40자 이내를 권장하며 평가
 scope에는 서비스 환경만 간결하게 쓰고 평가 기준 목록이나 장 제목을 나열하지 않는다.
 부제·영역이 제목과 중복되면 빈 문자열로 둔다. 사실 주장을 추가하거나 우열·성능 수치를 제목에 넣지 않는다.
 표지 필드에는 줄바꿈·인용 ID·대괄호를 쓰지 않는다. 작성자·날짜·소속은 생성하지 않는다.
-나머지 출력은 고정된 일곱 필드(summary, background, technology_overview,
-evaluation_method, perspectives, implications, limitations)의 문단 목록이다.
+본문 출력은 스키마에 있는 필드의 문단 목록이다. 최초에는 summary, background,
+technology_overview, evaluation_method, perspectives, implications, limitations를 작성한다.
+재작성에는 수정 대상 필드만 있다. 해당 장의 모든 지적을 실제로 수정해 반환한다.
+누락된 필드는 코드가 이전 본문으로 채우므로 임의로 추가하지 않는다.
 각 문단의 text에는 본문만 작성하고 대괄호나 출처 ID를 직접 쓰지 않는다.
 그 문단을 뒷받침하는 출처는 evidence_ids에서 스키마가 허용한 ID만 선택한다.
 근거가 없는 한계·미확인 설명의 evidence_ids는 빈 목록으로 둔다.
@@ -144,10 +140,14 @@ REPORT_PROMPT = """당신은 KIVI와 InfiniGen의 GPU 클라우드 LLM 서비스
 각 관점에서 두 기술을 모두 분석하며, 이해관계자별 편익·부담과 도메인 6개 항목의 판단을 보존한다.
 5장은 상충 관계와 조건별 적용 가능성을 설명한다. 6장은 남은 공백과 확인 방법을 구체적으로 적는다.
 공개 근거가 없으면 무엇을 확인했으며 무엇이 남았는지 설명하되 사실을 만들어 분량을 채우지 않는다.
-수정 요청과 이전 품질 지적이 있으면 해결하고 올바른 기존 내용을 보존한다.
+수정 요청과 이전 품질 지적이 있으면 findings/문제 quote와 대응 evidence_ids를 하나씩 대조한다.
+문제 문장을 동의어로만 바꾸지 말고, 원문과 다른 단정을 삭제하거나 실제 원문 내용으로 고친다.
+revision_sections에 지정된 장만 수정한다. 나머지 장은 코드가 이전 본문을 보존한다.
+수정 대상 장의 모든 지적을 한 번의 재작성에서 해결하고, 올바른 기존 판단·조건·한계는 보존한다.
 REFERENCE는 코드가 실제 본문 인용만으로 생성하므로 sections에서 생략해도 된다.
 gaps·domain·quality_feedback 같은 입력 필드명은 근거 ID가 아니므로 인용하지 않는다.
-보고서 전체를 반환한다. 한국어로 쓰고 Markdown 표 대신 읽기 쉬운 문단과 목록을 사용한다."""
+최초에는 전체 본문을, 재작성에는 스키마가 요구한 수정 장의 전체 내용을 반환한다.
+재작성 장만으로 전체 분량을 채우지 않는다. 한국어로 쓰고 Markdown 표 대신 읽기 쉬운 문단과 목록을 사용한다."""
 
 
 def write_report(state, *, chain=None):
@@ -165,8 +165,17 @@ def write_report(state, *, chain=None):
         "quality_feedback": state.get("quality_result"),
         "gaps": state.get("evidence_gaps"),
         "allowed_evidence_ids": list(evidence),
+        "revision_sections": issue_sections(state["quality_result"]["issues"])
+        if state.get("quality_result") and not state["quality_result"]["passed"]
+        else [],
     }
-    schema = cited_report_schema(evidence) if chain is None else None
+    revision_sections = payload["revision_sections"] if state.get("report") else []
+    fields = tuple(
+        name
+        for name, title in zip(BODY_FIELDS, REPORT_SECTION_TITLES[:-1], strict=True)
+        if not revision_sections or title in revision_sections
+    )
+    schema = cited_report_schema(evidence, fields=fields) if chain is None else None
     if schema is not None:
         prompt = REPORT_PROMPT.replace(
             "사실 주장마다 evidence에 존재하는 정확한 [근거 ID]를 붙인다. 숫자 인용은 아직 사용하지 않는다.",
@@ -180,7 +189,7 @@ def write_report(state, *, chain=None):
     try:
         raw = chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
         result = (
-            materialize_cited_report(schema.model_validate(raw))
+            materialize_cited_report(schema.model_validate(raw), state.get("report"))
             if schema is not None
             else ReportOutput.model_validate(raw)
         )
@@ -188,7 +197,7 @@ def write_report(state, *, chain=None):
         if schema is not None:
             raise ReportValidationError(
                 "보고서 구조·인용 선택 오류: cover에 title, subtitle, scope를 작성하고 "
-                "일곱 필드의 문단에 text와 evidence_ids를 "
+                "스키마가 요구한 본문 필드의 문단에 text와 evidence_ids를 "
                 "작성하세요. text에는 대괄호를 쓰지 않고 evidence_ids는 "
                 "allowed_evidence_ids에서만 선택하세요. 소제목은 4장 content에 해당하는 "
                 "perspectives 문단에 넣으세요."
@@ -210,6 +219,17 @@ def write_report(state, *, chain=None):
             + " 순서로 작성하고 4.1~4.4 소제목은 4장 content에 넣으세요."
         )
     sections = [(section.title, section.content.strip()) for section in result.sections]
+    original_sections = sections
+    sections = apply_revision(state, sections)
+    if sections != original_sections:
+        result.cited_evidence_ids = list(
+            dict.fromkeys(
+                value.strip()
+                for title, text in sections
+                if title != "REFERENCE"
+                for value in CITATION.findall(text)
+            )
+        )
     inline_ids = {
         value.strip()
         for title, text in sections

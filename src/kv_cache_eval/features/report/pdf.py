@@ -30,6 +30,7 @@ def _draw_cover(canvas, document, font_name, metadata, cover):
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import Paragraph
 
     width, height = document.pagesize
@@ -57,7 +58,8 @@ def _draw_cover(canvas, document, font_name, metadata, cover):
             fontSize=size,
             leading=leading,
             textColor=color,
-            wordWrap="CJK",
+            # 공백에서 먼저 줄을 나누고, 한 줄보다 긴 단어만 분할한다.
+            splitLongWords=True,
             alignment=alignment,
         )
         item = Paragraph(_paragraph_text(text), style)
@@ -83,8 +85,16 @@ def _draw_cover(canvas, document, font_name, metadata, cover):
 
     canvas.saveState()
     try:
+        # 살짝 넘치는 제목은 한 줄로 맞추되, 긴 제목의 가독성은 유지한다.
+        title_width = stringWidth(cover.title, font_name, 25)
+        title_size = max(22, min(25, 25 * available / title_width))
         title_height = paragraph(
-            cover.title, height - 85 * mm, 25, 38, max_height=34 * mm, min_size=16
+            cover.title,
+            height - 85 * mm,
+            title_size,
+            38 * title_size / 25,
+            max_height=34 * mm,
+            min_size=16,
         )
         cursor = height - 85 * mm - title_height - 10 * mm
         if cover.subtitle:

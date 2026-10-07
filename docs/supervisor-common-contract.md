@@ -1,6 +1,6 @@
 # Supervisor 리팩토링 공통 개발 계약
 
-계약 버전: 1.2 구현 반영 · 적용 대상: KIVI와 InfiniGen 다관점 평가 프로젝트
+계약 버전: 1.3 품질 피드백 계약 보완 · 적용 대상: KIVI와 InfiniGen 다관점 평가 프로젝트
 
 `main-ver2`에 통합 구현한 Supervisor의 인터페이스와 동작을 설명한다. A·B·C 표기는 이후 팀 인계를 위한 책임 구분이며, 이번 구현은 담당 구분 없이 전체 범위를 반영했다. A는 흐름 제어, B는 조사·평가와 공통 State, C는 종합·보고서와 품질 평가를 뜻한다.
 
@@ -248,6 +248,9 @@ class QualityIssue(TypedDict):
     section: str
     reason: str
     required_action: str
+    kind: NotRequired[Literal["claim", "missing_content"]]
+    quote: NotRequired[str]
+    evidence_ids: NotRequired[list[str]]
 
 class QualityResult(TypedDict):
     report_revision: int
@@ -257,7 +260,7 @@ class QualityResult(TypedDict):
     issues: list[QualityIssue]
 ```
 
-`reasons`에는 네 항목의 판정 이유를 모두 기록한다. `fail` 또는 `unknown`인 항목에는 한 건 이상의 수정 지적을 포함한다. 네 항목이 전부 `pass`이고 수정 지적이 없을 때만 `passed=true`다. 네 관점의 제목이 존재한다는 이유만으로 내용 커버리지를 통과시키지 않는다.
+`reasons`에는 네 항목의 판정 이유를 모두 기록한다. LLM이 판정한 `fail` 또는 `unknown`에는 한 건 이상의 수정 지적을 포함한다. 코드의 구조 검사로 내용 검토가 보류된 항목은 `unknown`으로 두고, 실제 구조 오류에 대해서만 수정 지적을 전달한다. 네 항목이 전부 `pass`이고 수정 지적이 없을 때만 `passed=true`다. 네 관점의 제목이 존재한다는 이유만으로 내용 커버리지를 통과시키지 않는다.
 
 | 항목 | 판정 내용 |
 |---|---|
@@ -287,6 +290,9 @@ class QualityResult(TypedDict):
   "issues": [{
     "criterion": "perspective_coverage",
     "section": "4. 관점별 평가 결과",
+    "kind": "missing_content",
+    "quote": "",
+    "evidence_ids": [],
     "reason": "운영자와 개발자의 편익·부담이 구분되지 않았다.",
     "required_action": "기존 stakeholder_eval의 근거를 사용해 해당 내용을 보완한다."
   }]
@@ -294,6 +300,16 @@ class QualityResult(TypedDict):
 ```
 
 위 판정은 연동을 위한 예시이며 실제 실행 결과가 아니다. 보고서 노드는 재작성 시 입력 State의 `quality_result.issues`를 읽는다. A는 이전 판정을 요청 입력으로 보존하고, 새 보고서가 반환된 뒤 이전 `quality_result`를 해제한다. 품질 노드는 새 `report_revision`을 검사 결과에 복사한다.
+
+### 평가 응답과 수정 반영 검증
+
+- Judge에는 현재 보고서·근거와 사용자 질문·도메인을 전달한다. 이전 관점 평가·근거 공백은 전달하지 않아 오래된 분석이 현재 보고서를 대신하지 않도록 한다.
+- 모델 응답은 각 기준별 `status`, `reason`, `findings`다. 각 finding의 `section`은 단일 대목차로 제한한다. 4.1~4.4 소제목은 `4. 관점별 평가 결과`로 연결한다. 여러 문제는 별도 finding으로 반환한다.
+- `claim` 지적은 해당 장에 존재하는 `quote`와 유효한 `evidence_ids`를 검사한다. `missing_content`는 관점 누락에만 사용하고 quote는 비운다. 수정 행동은 문단·목록 기준으로 적는다.
+- 존재하지 않는 문장·장·근거 ID, pass와 지적의 모순은 `QualityValidationError`로 반환한다. Supervisor는 기존 호출 상한 안에서 품질 노드만 재호출하며 보고서 수정 횟수를 소모하지 않는다. 오류를 통과 판정으로 바꾸지 않는다.
+- 검증된 지적은 `QualityResult.issues`로 평탄화한다. 추가 세 필드는 기존 체크포인트·코드 구조 검사와의 호환을 위해 State에서 선택 필드다. 기존 복수 장·소제목 문자열도 대목차로 변환한다.
+- 재작성 모델의 출력 스키마에는 지적된 장만 넣는다. 반환된 장을 이전 본문에 병합해 전체 ReportDraft를 만들고 다른 장은 그대로 보존한다. 지적 문장이 그대로 남거나 누락 보완 대상 장이 바뀌지 않으면 거부한다. 인용·공백 변경은 본문 수정으로 세지 않는다. 의미상 수정의 타당성은 이후 Judge가 다시 검사한다.
+- 코드가 찾은 내용 오류는 Judge의 다른 지적과 합쳐 첫 평가에서 전달한다. 잘못된 목차·인용처럼 내용 검토가 불가능한 구조 오류만 Judge 호출을 생략한다. 공개 근거에 대한 한계 고지는 허용한다. 발췌에 없는 정보를 논문 전체의 부재로 확대하지 않는다. InfiniGen의 모델·시스템 비공개 단정은 검증된 물리 9쪽의 실험 설정이 존재할 때 코드에서도 차단한다. PTB를 설명하며 PTT가 오기라고 명시한 교정 문장은 오기 사용과 구분한다. 이 검사는 모든 사실 오류를 탐지하는 범용 검증이 아니다.
 
 보고서 재생성을 배정할 때 A는 `report`, `quality`, `export_pdf`의 완료 표시를 해제하고 `pdf_path=None`으로 둔다. 이전 초안과 판정은 수정 입력으로만 사용한다. 생성이 실패했다면 새 버전의 보고서가 완료되기 전까지 품질 검사·PDF 저장을 배정하지 않는다. 품질 검사는 현재 보고서의 완료 표시가 있어야 하고, PDF 저장은 현재 품질 검사의 완료 표시까지 있어야 한다.
 
