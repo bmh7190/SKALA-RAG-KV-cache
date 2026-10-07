@@ -45,17 +45,17 @@ class SharedResearchTest(unittest.TestCase):
         self.assertEqual(sum(counts.values()), 140)
 
     def test_common_node_uses_same_engine_and_returns_both_keys(self):
-        state = new_state()
+        state = new_state(question="공통 질문")
 
-        def fake_research(current, technology, **kwargs):
+        def fake_research(current, technology):
             self.assertIs(current, state)
-            self.assertEqual(kwargs["user_question"], "공통 질문")
+            self.assertEqual(current["question"], "공통 질문")
             return {"evidence": [], "notes": [technology]}
 
         with patch.object(
             node, "research_technology", side_effect=fake_research
         ) as shared:
-            output = node.research(state, user_question="공통 질문")
+            output = node.research(state)
         self.assertEqual(set(output), {"kivi_evidence", "infinigen_evidence"})
         self.assertEqual(output["kivi_evidence"]["notes"], ["KIVI"])
         self.assertEqual(output["infinigen_evidence"]["notes"], ["InfiniGen"])
@@ -64,7 +64,7 @@ class SharedResearchTest(unittest.TestCase):
         )
 
     def test_research_engine_receives_prior_evidence_on_retry(self):
-        state = new_state()
+        state = new_state(question="같은 질문")
         prior = {"evidence": [], "notes": ["earlier round"]}
         state["kivi_evidence"] = prior
         with (
@@ -74,7 +74,7 @@ class SharedResearchTest(unittest.TestCase):
                 return_value={"evidence": [], "notes": []},
             ) as workflow,
         ):
-            node.research_technology(state, "KIVI", user_question="같은 질문")
+            node.research_technology(state, "KIVI")
         self.assertIs(workflow.call_args.kwargs["prior"], prior)
         self.assertTrue(
             all("같은 질문" in item.text for item in workflow.call_args.args[0])

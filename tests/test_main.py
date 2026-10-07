@@ -51,9 +51,7 @@ class MainTest(unittest.TestCase):
                 return_value={"evidence": [], "notes": []},
             ) as workflow,
         ):
-            result = research_technology(
-                new_state(), "KIVI", user_question=app.QUESTION
-            )
+            result = research_technology(new_state(question=app.QUESTION), "KIVI")
         questions = workflow.call_args.args[0]
         self.assertEqual(len(questions), 10)
         self.assertTrue(

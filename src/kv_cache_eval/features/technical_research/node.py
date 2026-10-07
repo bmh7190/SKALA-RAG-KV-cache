@@ -21,7 +21,6 @@ def research_technology(
     top_k: int = 5,
     max_attempts: int = 2,
     max_llm_calls: int = 24,
-    user_question: str | None = None,
 ) -> ResearchResult:
     """기술 이름과 문서 manifest만 바꿔 공통 LangGraph 조사를 실행한다."""
     from kv_cache_eval.features.technical_research.ingest import TECHNOLOGIES
@@ -53,7 +52,7 @@ def research_technology(
         )
 
     reviewer = ModelReviewer(llm, max_calls=max_llm_calls, target=technology)
-    questions = questions_for_state(state, technology, user_question=user_question)
+    questions = questions_for_state(state, technology)
     key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
     result = research_questions(
         questions,
@@ -73,12 +72,10 @@ def research_technology(
     return result
 
 
-def research(state: State, *, user_question: str | None = None) -> StateUpdate:
+def research(state: State) -> StateUpdate:
     """한 Graph 노드에서 선정 기술 모두를 같은 조사 엔진으로 처리한다."""
     updates: StateUpdate = {}
     for technology in technologies(state):
         key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
-        updates[key] = research_technology(
-            state, technology, user_question=user_question
-        )
+        updates[key] = research_technology(state, technology)
     return updates

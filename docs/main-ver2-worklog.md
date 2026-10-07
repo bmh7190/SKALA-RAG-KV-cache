@@ -156,3 +156,13 @@ REPORT_PDF_PATH=output/pdf/kv_cache_evaluation_main_ver2.pdf \
 - 새로운 전체 외부 실행을 다시 시작하지 않았다. run 7의 첫 품질 미달 직후 실제 체크포인트(step 21)를 새 상한으로 오프라인 정책 재생한 결과, 보고서 호출 2회·revision 1에서 `incomplete`, next_agent=None으로 종료했다. 이는 실제 새 모델 실행과 구분한다.
 - 검증: 형식 실패 후 한 번 재작성하고 품질 검사에 실패하면 세 번째 작성을 차단하는 회귀 사례 포함, 전체 92개 offline 테스트 통과.
 - LangSmith 완료 실행: https://smith.langchain.com/o/1c071fda-fef0-4418-b9c1-8fe30b029367/projects/p/44ee5258-78bf-48af-927b-da96e56d2010/r/01a114b2-8334-7ca3-bbb1-a4d1b9c4c81b?poll=true
+
+## 후속 정리 — refactor 브랜치
+
+### 미사용 기준 제거와 질문 전달 통일
+
+- `main-ver2`의 `7dfe02f`에서 분기했다. 사용자 요청에 따라 작업 브랜치 이름은 `refactor`로 정했다.
+- 코드·문서에서 참조하지 않는 `features/domain/criteria.py`를 제거했다. 실제 평가 기준은 기존 `rubric.py`를 사용한다.
+- Graph 생성부터 조사 함수까지 중복 전달하던 `user_question` 인자를 없애고, 질문 생성기가 `State.question`을 읽도록 통일했다. 재개 실행에서도 체크포인트에 저장한 원래 질문을 사용한다.
+- 기술 조사 문서와 기존 질문 전달 테스트를 갱신했다. 예전 CLI 명령을 유지하는 `run_infinigen.py`는 호환성 진입점으로 남겼다.
+- 검증: 외부 통신을 차단한 전체 92개 테스트 통과. 질문 전달·이전 근거 재사용·SQLite 재개를 포함한다. 변경한 Python 파일의 Ruff I/F 검사 통과.

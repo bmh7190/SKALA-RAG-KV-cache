@@ -27,15 +27,12 @@ Node = Callable[[State], StateUpdate]
 def build_graph(
     overrides: Mapping[str, Node] | None = None,
     *,
-    user_question=None,
     checkpointer=None,
     interrupt_after=None,
     trace_dir: Path | None = None,
 ):
     nodes = {
-        "technical_research": lambda state: research(
-            state, user_question=state.get("question") or user_question
-        ),
+        "technical_research": research,
         "maturity": evaluate_maturity,
         "market": evaluate_market,
         "stakeholders": evaluate_stakeholders,
@@ -112,7 +109,6 @@ def run(
     with SqliteSaver.from_conn_string(str(path)) as saver:
         graph = build_graph(
             overrides,
-            user_question=question,
             checkpointer=saver,
             interrupt_after=interrupt_after,
             trace_dir=trace_dir,

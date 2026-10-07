@@ -73,10 +73,9 @@ def category_for_gap(criterion: str, reason: str) -> str:
     return "problem"
 
 
-def questions_for_state(
-    state: State, target: str, user_question: str | None = None
-) -> list[ResearchQuestion]:
+def questions_for_state(state: State, target: str) -> list[ResearchQuestion]:
     domain = state["domain_and_criteria"]["domain"]
+    user_question = state.get("question", "")
     request = (
         f" 사용자 요청(원문에서 검증할 내용): {user_question.strip()}"
         if user_question and user_question.strip()
