@@ -147,6 +147,16 @@ uv sync --locked --all-extras
 
 체크포인트와 실행 기록에는 근거·평가 내용이 포함되며 Git에서 제외됩니다. 생성 도중 중단된 외부 요청은 재개 시 다시 호출될 수 있습니다. 동일 실행의 PDF는 임시 파일 교체로 저장합니다.
 
+### `.env`를 바꿔도 인증 오류가 남는 경우
+
+이 프로젝트는 이미 설정된 프로세스 환경변수를 `.env`보다 우선한다. 실행 환경의 키가 오래된 값이면 `.env` 수정만으로 적용되지 않는다. 로컬 파일의 OpenAI 키를 사용하려면 해당 실행에서만 기존 값을 제외한다.
+
+```bash
+env -u OPENAI_API_KEY .venv/bin/python scripts/run_supervisor.py --run-id new-run-01
+```
+
+API 키 원문을 로그나 커밋에 남기지 않는다. LangSmith의 추적 업로드 오류와 OpenAI 모델 호출 오류는 별도로 확인한다.
+
 ## Verification
 
 ```bash
