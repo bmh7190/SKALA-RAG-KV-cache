@@ -13,9 +13,9 @@ from kv_cache_eval.common.tasks import (
     criteria,
     technologies,
 )
+from kv_cache_eval.features.domain.node import DomainResponseError
 from kv_cache_eval.features.report.node import ReportTooLong
 from kv_cache_eval.features.supervisor.catalog import CRITERIA, OUTPUTS
-from kv_cache_eval.graph.gates import assessment_gaps
 
 TYPES = {
     **{
@@ -42,7 +42,9 @@ class InvalidRequest(ValueError):
 def classify_error(error):
     status = getattr(error, "status_code", None)
     name = type(error).__name__.lower()
-    if isinstance(error, InvalidRequest):
+    if isinstance(error, DomainResponseError):
+        code, retry = "response_repair_exhausted", False
+    elif isinstance(error, InvalidRequest):
         code, retry = "invalid_request", False
     elif isinstance(error, InputBudgetExceeded):
         code, retry = "input_budget_exceeded", False
@@ -71,6 +73,9 @@ def classify_error(error):
 
 def worker(agent, function):
     def execute(state, config: RunnableConfig):
+        # Resolve after graph package initialization to avoid a circular import.
+        from kv_cache_eval.graph.gates import assessment_gaps
+
         try:
             try:
                 selected = technologies(state)

@@ -19,6 +19,7 @@ from kv_cache_eval.features.domain.measurement import (
 )
 from kv_cache_eval.features.domain.prompt import (
     OUTPUT_SCHEMA,
+    REPAIR_INSTRUCTIONS,
     SYSTEM_PROMPT,
     VERIFY_PROMPT,
     VERIFY_SCHEMA,
@@ -71,7 +72,11 @@ def _check_json(value):
     json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
-def _unknown(technology, criterion, reason):
+class DomainResponseError(ValueError):
+    """Bounded rewriting could not produce a verifiable evaluation response."""
+
+
+def _unknown(technology, criterion, reason, *, failure_kind="evidence_gap"):
     return {
         "technology": technology,
         "criterion": criterion,
@@ -81,7 +86,12 @@ def _unknown(technology, criterion, reason):
         "evidence_ids": [],
         "uncertainty": reason,
         "basis_status": "unverified",
+        "failure_kind": failure_kind,
     }
+
+
+def _response_error(technology, criterion, reason):
+    return _unknown(technology, criterion, reason, failure_kind="response_error")
 
 
 def _finish(rows, notes, by_id=None):
@@ -376,18 +386,18 @@ def _candidates(raw, by_id, rows, notes):
             continue
         if key in seen:
             candidates.pop(key, None)
-            rows[key] = _unknown(*key, "평가 항목이 중복되어 재확인 필요")
+            rows[key] = _response_error(*key, "평가 항목이 중복되어 재확인 필요")
             continue
         seen.add(key)
         try:
             _check_json(item)
         except (TypeError, ValueError, UnicodeError, RecursionError):
-            rows[key] = _unknown(
+            rows[key] = _response_error(
                 *key, "평가 응답에 저장할 수 없는 문자 또는 값이 있어 재작성 필요"
             )
             continue
         if item.get("uncertainty") is not None and not _utf8(item["uncertainty"]):
-            rows[key] = _unknown(
+            rows[key] = _response_error(
                 *key, "평가 주의사항 형식 오류; 문자열 또는 null로 재작성 필요"
             )
             continue
@@ -406,13 +416,15 @@ def _candidates(raw, by_id, rows, notes):
             or not _text(item.get("rationale"))
             or (score is not None and (type(score) is not int or not 1 <= score <= 5))
         ):
-            rows[key] = _unknown(*key, "인용문·근거 ID·판단 이유·점수 형식 확인 필요")
+            rows[key] = _response_error(
+                *key, "인용문·근거 ID·판단 이유·점수 형식 확인 필요"
+            )
             continue
         candidate = dict(item)
         candidate.update(criterion=criterion, evidence_ids=ids)
         if criterion in NUMERIC_CRITERIA and item.get("measurement") is not None:
             if not validate_measurement(item["measurement"], ids, by_id):
-                rows[key] = _unknown(
+                rows[key] = _response_error(
                     *key,
                     "원문 조건과 인용문에서 확정적인 비교 측정값을 확인할 수 없음; 범위·근삿값·한계·부호 확인 필요",
                 )
@@ -420,7 +432,7 @@ def _candidates(raw, by_id, rows, notes):
         candidates[key] = candidate
     for key in rows:
         if key[0] in allowed_technologies and key not in seen:
-            rows[key] = _unknown(
+            rows[key] = _response_error(
                 *key,
                 "평가 응답에 이 항목이 누락되었습니다. 해당 항목의 평가를 다시 작성해야 합니다.",
             )
@@ -449,7 +461,7 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
             or review.get("supported") is not True
             or not _text(reason)
         ):
-            rows[key] = _unknown(
+            rows[key] = _response_error(
                 *key,
                 f"근거 검토 미통과: {reason if _text(reason) else '검토 결과 없음 또는 중복'}",
             )
@@ -470,7 +482,7 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
                 score = None
                 uncertainties.append("비교 가능한 측정값이 없어 정량 점수 미확인")
             elif review.get("measurement_supported") is not True:
-                rows[key] = _unknown(
+                rows[key] = _response_error(
                     *key, f"측정값의 지표·단위·비교 조건 확인 실패: {reason}"
                 )
                 continue
@@ -479,7 +491,7 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
                     score, change, detail = score_measurement(key[1], measurement)
                     displayed_change = format_change(change)
                 except (ArithmeticError, ValueError, TypeError):
-                    rows[key] = _unknown(
+                    rows[key] = _response_error(
                         *key, "측정값 계산 실패: 해당 항목의 수치와 계산 조건 확인 필요"
                     )
                     continue
@@ -499,8 +511,8 @@ def _apply_reviews(raw, candidates, by_id, research_notes, rows):
                         "측정 사실은 확인됨. 원문 점수 경계가 겹쳐 점수만 미확인; 팀 기준 확정 필요"
                     )
         elif score is not None and review.get("rubric_supported") is not True:
-            rows[key] = _unknown(*key, f"정성 점수와 Rubric의 대응 확인 실패: {reason}")
-            continue
+            score = None
+            uncertainties.append(f"정성 판단은 지지되지만 점수 기준은 미확인: {reason}")
         elif score is None:
             uncertainties.append("정성 판단은 가능하지만 수치 점수는 미확인")
         uncertainties.extend(research_notes.get(key[0], []))
@@ -579,7 +591,7 @@ def _review_batches(payload, candidates, limit, rows, notes):
             len(json.dumps(review_draft, ensure_ascii=False).encode("utf-8"))
             > MAX_REVIEW_DRAFT_BYTES
         ):
-            rows[key] = _unknown(
+            rows[key] = _response_error(
                 *key,
                 "평가 초안이 항목별 검토 한도를 초과함; 짧은 인용문으로 재작성 필요",
             )
@@ -601,11 +613,72 @@ def _review_batches(payload, candidates, limit, rows, notes):
                 _size(_messages(VERIFY_PROMPT, {**payload, "drafts": [review_draft]}))
                 > limit
             ):
-                rows[key] = _unknown(*key, "근거 검토 요청이 입력 한도 초과")
+                rows[key] = _response_error(*key, "근거 검토 요청이 입력 한도 초과")
                 notes.append(f"input_budget_exceeded: {key[0]} / {key[1]}")
                 batch = {}
     if batch:
         yield batch
+
+
+def _assess_payload(payload, rows, notes, limit):
+    """Validate once, then rewrite only response errors once using the same evidence."""
+    selected = {item["id"]: item for item in payload["evidence"]}
+    active = {
+        key: value
+        for key, value in rows.items()
+        if key[0] in payload["technologies"] and key[1] in payload["rubric"]
+    }
+    request = payload
+    for attempt in range(2):
+        system = SYSTEM_PROMPT + (REPAIR_INSTRUCTIONS if attempt else "")
+        if not _fits(request, limit) or _size(_messages(system, request)) > limit:
+            raise InputBudgetExceeded(
+                "도메인 응답 보정 요청이 입력 한도를 초과했습니다"
+            )
+        raw = invoke_structured(_messages(system, request), OUTPUT_SCHEMA)
+        candidates = _candidates(raw, selected, active, notes)
+        for batch in _review_batches(payload, candidates, limit, active, notes):
+            reviews = invoke_structured(
+                _messages(
+                    VERIFY_PROMPT,
+                    {
+                        **payload,
+                        "drafts": [_review_draft(item) for item in batch.values()],
+                    },
+                ),
+                VERIFY_SCHEMA,
+            )
+            _apply_reviews(reviews, batch, selected, payload["research_notes"], active)
+        rows.update(active)
+        failed = {
+            key: row
+            for key, row in active.items()
+            if row.get("failure_kind") == "response_error"
+        }
+        if not failed:
+            return
+        if attempt:
+            notes.append(f"response_repair_exhausted: {len(failed)}개 항목 응답 오류")
+            return
+        notes.append(f"response_repair: {len(failed)}개 항목을 같은 근거로 1회 재작성")
+        targets = [
+            {"technology": t, "criterion": c, "reason": row["uncertainty"]}
+            for (t, c), row in failed.items()
+        ]
+        previous = [
+            item
+            for item in raw["evaluations"]
+            if isinstance(item, dict)
+            and (item.get("technology"), item.get("criterion")) in failed
+        ]
+        request = {
+            **payload,
+            "technologies": list(dict.fromkeys(t for t, _ in failed)),
+            "rubric": {c: DOMAIN_RUBRIC[c] for _, c in failed},
+            "repair_targets": targets,
+            "previous_drafts": previous,
+        }
+        active = failed
 
 
 @evaluation_settings()
@@ -690,44 +763,23 @@ def _evaluate(
         return _finish({key: _unknown(*key, reason) for key in rows}, notes)
 
     for payload in payloads:
-        selected = {item["id"]: item for item in payload["evidence"]}
         try:
-            raw = invoke_structured(_messages(SYSTEM_PROMPT, payload), OUTPUT_SCHEMA)
-            candidates = _candidates(raw, selected, rows, notes)
+            _assess_payload(payload, rows, notes, max_input_bytes)
         except DomainConfigurationError:
-            # 공용 그래프는 미확인을 근거 부족으로 판단하므로 설정 오류를 그 경로로 보내지 않는다.
             raise
         except Exception as exc:
             if state.get("next_agent") == "domain":
                 raise
-            reason = f"execution_error (assessment): {type(exc).__name__}; 연결 또는 응답 확인 후 재실행 필요"
+            reason = f"execution_error: {type(exc).__name__}; 연결 또는 응답 확인 후 재실행 필요"
             notes.append(reason)
             for key in rows:
                 if key[0] in payload["technologies"]:
-                    rows[key] = _unknown(*key, reason)
-            continue
-        for batch in _review_batches(payload, candidates, max_input_bytes, rows, notes):
-            try:
-                reviews = invoke_structured(
-                    _messages(
-                        VERIFY_PROMPT,
-                        {
-                            **payload,
-                            "drafts": [_review_draft(item) for item in batch.values()],
-                        },
-                    ),
-                    VERIFY_SCHEMA,
-                )
-                _apply_reviews(reviews, batch, selected, research_notes, rows)
-            except DomainConfigurationError:
-                raise
-            except Exception as exc:
-                if state.get("next_agent") == "domain":
-                    raise
-                reason = f"execution_error (verification): {type(exc).__name__}; 검토 응답 확인 후 재실행 필요"
-                notes.append(reason)
-                for key in batch:
-                    rows[key] = _unknown(*key, reason)
+                    rows[key] = _response_error(*key, reason)
+    unresolved = [
+        key for key, row in rows.items() if row.get("failure_kind") == "response_error"
+    ]
+    if unresolved and state.get("next_agent") == "domain":
+        raise DomainResponseError(f"도메인 응답 보정 소진: {len(unresolved)}개 항목")
     return _finish(rows, notes, by_id)
 
 

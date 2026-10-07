@@ -46,6 +46,7 @@ class Evaluation(TypedDict):
     uncertainty: str | None
     basis_status: BasisStatus
     stakeholder_group: NotRequired[str]
+    failure_kind: NotRequired[Literal["response_error", "evidence_gap"]]
 
 
 class EvaluationResult(TypedDict):
