@@ -183,3 +183,12 @@ REPORT_PDF_PATH=output/pdf/kv_cache_evaluation_main_ver2.pdf \
 - `_collect`·`_finish` 대신 `collect_evidence`·`build_result`처럼 역할을 드러내는 이름을 사용한다. 수집 결과의 5개 위치 기반 반환값은 이름이 있는 `CollectedEvidence`로 바꿨다. 모델 호출 테스트의 대체 위치도 실제 호출을 담당하는 모듈로 옮겼다.
 - 입력 한도 초과 시 모델을 호출하지 않는 동작, 상충 근거 제외와 입력 State 보존 사례를 추가했다. 기존 부분 보정·인용·측정값·근거 부족 정책을 유지한다.
 - 검증: Supervisor 구조 변경을 포함한 작업 트리에서 오프라인 테스트 105개 통과. 실제 외부 모델 실행은 수행하지 않았다.
+
+### 구조 가독성 개선 — Supervisor와 실행 진입점
+
+- `supervise()`를 29줄의 판단 흐름으로 정리했다. 이전 작업 결과 처리, 대기 관점 선택, 보고서 단계 선택을 이름 있는 함수로 구분했다.
+- 배정·종료·결과 무효화는 `transitions.py`, 실행 오류 재시도와 근거 재조사는 `retries.py`가 담당한다. 상태 변경 함수는 Supervisor가 복사한 State에만 적용한다.
+- `worker()`는 32줄에서 요청 검증 → 작업 실행 → 결과 검증 → 근거 부족 확인 → 반환을 연결한다. 스키마·품질 버전·PDF 존재 검사와 진단 메모를 제외한 변경 감지를 별도 함수로 분리했다.
+- `graph/runner.py`는 실행·재개·체크포인트를, `graph/workflow.py`는 LangGraph 연결을 담당한다. 공개 진입점 `from kv_cache_eval.graph import run`은 유지한다. 결정 로그 포맷은 연결 코드 아래의 별도 함수로 옮겼다.
+- README에 실행 순서, 파일별 책임, State가 Supervisor와 작업자 사이를 도는 흐름을 추가했다.
+- 검증: 배정과 다른 결과 거부, 작업자의 입력 State 변경 격리, 진단 메모만 바뀌었을 때 결과 무효화 방지 사례를 추가했다. 오프라인 전체 105개 통과, 변경 Python 파일 Ruff I/F·포맷 및 Git 공백 검사 통과. 보고서 재시도 기본 1회, 인용 검증, SQLite 재개 동작을 유지했다.

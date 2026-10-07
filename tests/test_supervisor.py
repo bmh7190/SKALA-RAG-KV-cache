@@ -1,12 +1,14 @@
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from supervisor_fixtures import evidence, nodes
 
 from kv_cache_eval.common.state import new_state
+from kv_cache_eval.features.supervisor.execution import worker
 from kv_cache_eval.features.supervisor.node import supervise
-from kv_cache_eval.graph.workflow import build_graph, run
+from kv_cache_eval.graph import build_graph, run
 
 
 class SupervisorTests(unittest.TestCase):
@@ -20,6 +22,49 @@ class SupervisorTests(unittest.TestCase):
         return build_graph(self.nodes).invoke(
             new_state(**limits), {"recursion_limit": 100}
         )
+
+    def test_previous_result_must_match_assignment_and_preserve_input(self):
+        for wrong_field, value in (("agent", "market"), ("step", 999)):
+            with self.subTest(wrong_field=wrong_field):
+                current = supervise(new_state())
+                current["last_result"] = {
+                    "agent": current["next_agent"],
+                    "step": current["step_count"],
+                    "status": "completed",
+                    "gaps": [],
+                    "error": None,
+                    "changed_keys": [],
+                    wrong_field: value,
+                }
+                before = deepcopy(current)
+                decision = supervise(current)
+                self.assertEqual(decision["status"], "failed")
+                self.assertIsNone(decision["next_agent"])
+                self.assertEqual(current, before)
+
+    def test_worker_isolates_input_and_ignores_diagnostic_only_changes(self):
+        current = new_state()
+        current.update(next_agent="technical_research", step_count=1)
+        for tech, key in (
+            ("KIVI", "kivi_evidence"),
+            ("InfiniGen", "infinigen_evidence"),
+        ):
+            current[key] = {"evidence": [evidence(tech, "base")], "notes": []}
+        before = deepcopy(current)
+
+        def append_notes(local):
+            local["max_steps"] = 999
+            updates = {}
+            for key in ("kivi_evidence", "infinigen_evidence"):
+                local[key]["notes"].append("새 진단 정보")
+                updates[key] = local[key]
+            return updates
+
+        result = worker("technical_research", append_notes)(current, {})
+        self.assertEqual(result["last_result"]["status"], "completed")
+        self.assertEqual(result["last_result"]["changed_keys"], [])
+        self.assertEqual(current, before)
+        self.assertEqual(result["kivi_evidence"]["notes"], ["새 진단 정보"])
 
     def test_full_flow_only_exports_after_quality(self):
         s = self.invoke()
