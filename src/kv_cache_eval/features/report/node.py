@@ -11,12 +11,15 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from kv_cache_eval.common.evidence import (
     CITATION,
-    collect_evidence,
     require_values,
     validate_citations,
 )
 from kv_cache_eval.common.llm import structured_chain
 from kv_cache_eval.common.tasks import EVALUATION_KEYS, criteria
+from kv_cache_eval.features.report.factual_checks import (
+    FACTUAL_RULES,
+    collect_report_evidence,
+)
 from kv_cache_eval.features.report.pdf import _resolve_pdf_path, _write_pdf
 
 REPORT_SECTION_TITLES = (
@@ -135,7 +138,7 @@ gaps·domain·quality_feedback 같은 입력 필드명은 근거 ID가 아니므
 def write_report(state, *, chain=None):
     criteria(state, REPORT_SECTION_TITLES)
     inputs = require_values(state, "synthesis", *EVALUATION_KEYS.values())
-    evidence = collect_evidence(state)
+    evidence = collect_report_evidence(state)
     payload = {
         **inputs,
         "domain": state["domain_and_criteria"],
@@ -153,7 +156,9 @@ def write_report(state, *, chain=None):
             "사실 주장마다 해당 문단의 evidence_ids에서 정확한 근거 ID를 선택한다.",
         )
         chain = structured_chain(
-            schema, prompt + "\n" + CITED_REPORT_PROMPT, name="report_draft"
+            schema,
+            prompt + "\n" + CITED_REPORT_PROMPT + "\n" + FACTUAL_RULES,
+            name="report_draft",
         )
     try:
         raw = chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
@@ -292,7 +297,7 @@ def export_pdf(state):
     ) as stream:
         temporary = Path(stream.name)
     try:
-        _write_pdf(printable_report(report, collect_evidence(state)), temporary)
+        _write_pdf(printable_report(report, collect_report_evidence(state)), temporary)
         count = len(PdfReader(temporary).pages)
         if count > 10:
             raise ReportTooLong(
