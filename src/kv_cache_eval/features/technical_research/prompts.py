@@ -25,14 +25,14 @@ QUESTION_TEMPLATES = (
     ResearchQuestion("mechanism", "{target}은 그 원리를 실제로 어떻게 구현하는가?"),
     ResearchQuestion(
         "experiment_conditions",
-        "{target}의 실험 환경, 모델, 데이터 및 비교 조건은 무엇인가?",
+        "{target}의 실험 환경, 모델 계열과 크기, GPU와 CPU 메모리, 연결 대역폭, 데이터셋, 입력·출력 길이, 배치 크기 및 baseline은 무엇인가?",
     ),
     ResearchQuestion(
         "performance_results",
-        "{target}의 자원 사용량과 성능은 무엇을 어떻게 측정했는가?",
+        "{target}의 Experimental Setup와 Performance 절에서 throughput tokens per second, latency, batch size, peak memory를 무엇과 비교해 어떻게 측정했는가?",
     ),
     ResearchQuestion(
-        "model_quality", "{target}이 결과 품질에 미치는 영향은 어떻게 측정되었는가?"
+        "model_quality", "{target}의 모델별·과제별 품질 변화는 무엇인가? 평균뿐 아니라 하락한 과제, Table의 baseline과 설정도 확인한다."
     ),
     ResearchQuestion("limitations", "{target}의 적용 조건과 한계는 무엇인가?"),
     ResearchQuestion(

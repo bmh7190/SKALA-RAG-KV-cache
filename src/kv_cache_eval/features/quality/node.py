@@ -6,13 +6,16 @@ from typing import Literal
 from pydantic import BaseModel
 
 from kv_cache_eval.common.evidence import (
-    collect_evidence,
     require_values,
     validate_citations,
 )
 from kv_cache_eval.common.llm import structured_chain
-from kv_cache_eval.common.tasks import EVALUATION_KEYS
+from kv_cache_eval.features.report.content_rules import (
+    CONTENT_RULES,
+    known_content_issues,
+)
 from kv_cache_eval.features.report.node import REPORT_SECTION_TITLES
+from kv_cache_eval.features.report.source_audit import collect_report_evidence
 
 CRITERIA = ("groundedness", "neutrality", "bias_control", "perspective_coverage")
 
@@ -45,8 +48,10 @@ pass 항목도 실제로 검토한 이유를 적고, fail/unknown 항목은 해�
 
 def evaluate(state, *, chain=None):
     report = require_values(state, "report")["report"]
-    evidence = collect_evidence(state)
+    evidence = collect_report_evidence(state)
     structural = {}
+    for criterion, section, reason, action in known_content_issues(report):
+        structural[criterion] = (section, reason, action)
     sections = report["sections"]
     if [title for title, _ in sections] != list(REPORT_SECTION_TITLES) or any(
         not text.strip() for title, text in sections if title != "REFERENCE"
@@ -90,11 +95,16 @@ def evaluate(state, *, chain=None):
         payload = {
             "report": report,
             "evidence": evidence,
-            "evaluations": {key: state.get(key) for key in EVALUATION_KEYS.values()},
-            "gaps": state.get("evidence_gaps"),
+            "scope": "평가 대상은 최종 report다. 과거 분석의 null 점수나 검색 누락으로 최종 보고서를 감점하지 않는다.",
         }
         chain = chain or structured_chain(
-            Judgment, PROMPT, role="judge", name="report_quality"
+            Judgment,
+            PROMPT
+            + "\n"
+            + CONTENT_RULES
+            + "\n원문에 결과가 있는데 없다고 단정한 보고서는 groundedness fail로 판정한다. 추천 표현과 동일 기준 없는 성숙도 순위는 neutrality fail이다. fail/unknown의 이유에는 최종 report의 문제 문장을 그대로 인용하고 해당 출처 페이지를 특정한다. 출처에 없는 수치는 미확인과 확인 방법을 설명하면 커버리지 누락이 아니다. 논문에 운영 검증이나 독립 검증이 없다는 이유만으로 fail을 주지 않는다.",
+            role="judge",
+            name="report_quality",
         )
         judgments = Judgment.model_validate(
             chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})

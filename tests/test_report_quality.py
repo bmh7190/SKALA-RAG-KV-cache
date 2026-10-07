@@ -67,6 +67,27 @@ def judge(coverage="pass"):
     )
 
 
+def cited_output(text="설명", ids=None):
+    from kv_cache_eval.features.report.node import (
+        BODY_FIELDS,
+        DOMAIN_ITEMS,
+        STAKEHOLDER_ITEMS,
+    )
+
+    paragraph = {"text": text, "evidence_ids": ["kivi:a"] if ids is None else ids}
+    return {
+        **{name: [deepcopy(paragraph)] for name in BODY_FIELDS},
+        "perspectives": {
+            "maturity": [deepcopy(paragraph)],
+            "market": [deepcopy(paragraph)],
+        },
+        "domain_items": {name: [deepcopy(paragraph)] for name in DOMAIN_ITEMS},
+        "stakeholder_items": {
+            name: [deepcopy(paragraph)] for name in STAKEHOLDER_ITEMS
+        },
+    }
+
+
 class PrintableCitationTests(unittest.TestCase):
     def setUp(self):
         self.report = ready_state()["report"]
@@ -128,17 +149,78 @@ class PrintableCitationTests(unittest.TestCase):
 
 
 class ReportQualityTests(unittest.TestCase):
-    def test_runtime_report_uses_selected_ids_and_code_owned_headings(self):
-        from kv_cache_eval.features.report.node import BODY_FIELDS
+    def test_known_content_errors_block_judge_and_require_correction(self):
+        s = ready_state()
+        s["report"]["sections"][2] = (
+            "2. 기술 선정 및 개요",
+            "InfiniGen은 덜 중요한 항목은 유지하지 않는 방식이다. [kivi:a]",
+        )
 
+        def forbidden(_):
+            raise AssertionError("known erroneous draft must not spend a judge call")
+
+        q = evaluate(s, chain=RunnableLambda(forbidden))["quality_result"]
+        self.assertEqual(q["checks"]["groundedness"], "fail")
+        self.assertIn("CPU", q["issues"][0]["required_action"])
+
+    def test_stale_trl_and_synthesis_are_not_report_facts(self):
+        s = ready_state()
+        s["maturity_eval"]["evaluations"] = [
+            {
+                "technology": "KIVI",
+                "criterion": "TRL",
+                "score": 4,
+                "judgment": "TRL 4",
+                "evidence_ids": ["kivi:a"],
+            }
+        ]
+        s["synthesis"] = {"perspective_differences": ["InfiniGen TRL 2"]}
+
+        def generate(inputs):
+            import json
+
+            payload = json.loads(inputs["payload"])
+            self.assertNotIn("synthesis", payload)
+            self.assertNotIn("score", payload["reviewed_scope"]["maturity_eval"][0])
+            self.assertNotIn("judgment", payload["reviewed_scope"]["maturity_eval"][0])
+            return {
+                "sections": [
+                    {"title": t, "content": c} for t, c in s["report"]["sections"]
+                ],
+                "cited_evidence_ids": ["kivi:a"],
+            }
+
+        write_report(s, chain=RunnableLambda(generate))
+        self.assertEqual(s["maturity_eval"]["evaluations"][0]["score"], 4)
+
+    def test_judge_does_not_grade_legacy_null_scores(self):
+        s = ready_state()
+
+        def check(inputs):
+            import json
+
+            payload = json.loads(inputs["payload"])
+            self.assertNotIn("evaluations", payload)
+            self.assertNotIn("gaps", payload)
+            self.assertIn("report", payload)
+            return {
+                name: {
+                    "status": "pass",
+                    "reason": "현재 본문과 출처 검토",
+                    "section": "전체",
+                    "required_action": "",
+                }
+                for name in CRITERIA
+            }
+
+        self.assertTrue(
+            evaluate(s, chain=RunnableLambda(check))["quality_result"]["passed"]
+        )
+
+    def test_runtime_report_uses_selected_ids_and_code_owned_headings(self):
         def factory(schema, prompt, **kwargs):
             self.assertIn("CitedReport", schema.model_json_schema()["title"])
-            return RunnableLambda(
-                lambda _: {
-                    name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
-                    for name in BODY_FIELDS
-                }
-            )
+            return RunnableLambda(lambda _: cited_output("검증된 설명"))
 
         with patch(
             "kv_cache_eval.features.report.node.structured_chain", side_effect=factory
@@ -149,18 +231,17 @@ class ReportQualityTests(unittest.TestCase):
         )
         self.assertEqual(report["cited_evidence_ids"], ["kivi:a"])
         self.assertEqual(report["sections"][0][1], "검증된 설명 [kivi:a]")
+        self.assertIn("처리량", report["sections"][4][1])
+        self.assertIn("투자·산업 관계자", report["sections"][4][1])
 
     def test_runtime_schema_rejects_fabricated_ids_and_inline_gaps(self):
         from pydantic import ValidationError
 
-        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+        from kv_cache_eval.features.report.node import cited_report_schema
 
         schema = cited_report_schema({"kivi:a": {}})
         for text, ids in (("설명", ["kivi:invented"]), ("설명 [gaps]", [])):
-            raw = {
-                name: [{"text": "설명", "evidence_ids": ["kivi:a"]}]
-                for name in BODY_FIELDS
-            }
+            raw = cited_output()
             raw["summary"] = [{"text": text, "evidence_ids": ids}]
             with self.assertRaises(ValidationError):
                 schema.model_validate(raw)
@@ -168,13 +249,43 @@ class ReportQualityTests(unittest.TestCase):
     def test_runtime_empty_section_is_rejected(self):
         from pydantic import ValidationError
 
-        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+        from kv_cache_eval.features.report.node import cited_report_schema
 
         schema = cited_report_schema({"kivi:a": {}})
-        raw = {name: [{"text": "설명", "evidence_ids": []}] for name in BODY_FIELDS}
+        raw = cited_output(ids=[])
         raw["perspectives"] = []
         with self.assertRaises(ValidationError):
             schema.model_validate(raw)
+
+    def test_missing_domain_item_or_stakeholder_is_rejected(self):
+        from pydantic import ValidationError
+
+        from kv_cache_eval.features.report.node import (
+            DOMAIN_ITEMS,
+            STAKEHOLDER_ITEMS,
+            cited_report_schema,
+        )
+
+        schema = cited_report_schema({"kivi:a": {}})
+        for container, names in (
+            ("domain_items", DOMAIN_ITEMS),
+            ("stakeholder_items", STAKEHOLDER_ITEMS),
+        ):
+            for name in names:
+                raw = cited_output()
+                del raw[container][name]
+                with (
+                    self.subTest(container=container, name=name),
+                    self.assertRaises(ValidationError),
+                ):
+                    schema.model_validate(raw)
+
+    def test_pdf_heading_markers_are_removed_without_losing_text(self):
+        from kv_cache_eval.features.report.pdf import _paragraph_text
+
+        self.assertEqual(
+            _paragraph_text("### 4.1 기술 성숙도\n본문"), "4.1 기술 성숙도<br/>본문"
+        )
 
     def test_report_subheading_is_rejected_by_output_schema(self):
         s = ready_state()

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -11,13 +12,17 @@ from pydantic import BaseModel, Field, ValidationError, create_model
 
 from kv_cache_eval.common.evidence import (
     CITATION,
-    collect_evidence,
     require_values,
     validate_citations,
 )
 from kv_cache_eval.common.llm import structured_chain
 from kv_cache_eval.common.tasks import EVALUATION_KEYS, criteria
+from kv_cache_eval.features.report.content_rules import CONTENT_RULES
 from kv_cache_eval.features.report.pdf import _resolve_pdf_path, _write_pdf
+from kv_cache_eval.features.report.source_audit import (
+    collect_report_evidence,
+    report_assessment_scope,
+)
 
 REPORT_SECTION_TITLES = (
     "SUMMARY",
@@ -67,6 +72,22 @@ BODY_FIELDS = (
     "limitations",
 )
 
+DOMAIN_ITEMS = {
+    "gpu_memory": "GPU 메모리 사용량",
+    "transfer": "데이터 전송량",
+    "latency": "추론 지연시간",
+    "throughput": "처리량",
+    "model_quality": "모델 품질",
+    "operations": "적용·운영 난이도",
+}
+STAKEHOLDER_ITEMS = {
+    "operators": "서비스·인프라 운영자",
+    "developers": "모델·서빙 개발자",
+    "users": "서비스 이용자",
+    "competitors": "경쟁 기술 진영",
+    "investors": "투자·산업 관계자",
+}
+
 
 def cited_report_schema(evidence):
     """Let the model select verified IDs; code owns headings and inline citations."""
@@ -78,22 +99,67 @@ def cited_report_schema(evidence):
         text=(str, Field(pattern=r"^[^\[\]]*$", min_length=1)),
         evidence_ids=(list[citation_type], ...),
     )
+    domain = create_model(
+        "DomainCoverage",
+        **{name: (list[paragraph], Field(min_length=1)) for name in DOMAIN_ITEMS},
+    )
+    stakeholders = create_model(
+        "StakeholderCoverage",
+        **{name: (list[paragraph], Field(min_length=1)) for name in STAKEHOLDER_ITEMS},
+    )
+    perspectives = create_model(
+        "PerspectiveCoverage",
+        maturity=(list[paragraph], Field(min_length=1)),
+        market=(list[paragraph], Field(min_length=1)),
+    )
     return create_model(
         "CitedReport",
-        **{name: (list[paragraph], Field(min_length=1)) for name in BODY_FIELDS},
+        **{
+            name: (list[paragraph], Field(min_length=1))
+            for name in BODY_FIELDS
+            if name != "perspectives"
+        },
+        perspectives=(perspectives, ...),
+        domain_items=(domain, ...),
+        stakeholder_items=(stakeholders, ...),
     )
 
 
 def materialize_cited_report(result):
     sections = []
     cited = []
-    for name, title in zip(BODY_FIELDS, REPORT_SECTION_TITLES[:-1], strict=True):
+
+    def paragraphs_text(paragraphs):
         texts = []
-        for paragraph in getattr(result, name):
+        for paragraph in paragraphs:
             ids = list(dict.fromkeys(paragraph.evidence_ids))
             cited.extend(ids)
             texts.append(paragraph.text.strip() + "".join(f" [{eid}]" for eid in ids))
-        sections.append(Section(title=title, content="\n\n".join(texts)))
+        return "\n\n".join(texts)
+
+    for name, title in zip(BODY_FIELDS, REPORT_SECTION_TITLES[:-1], strict=True):
+        if name == "perspectives":
+            text = "4.1 기술 성숙도\n" + paragraphs_text(result.perspectives.maturity)
+            text += "\n\n4.2 시장성\n" + paragraphs_text(result.perspectives.market)
+            text += "\n\n4.3 이해관계자"
+            for field, label in STAKEHOLDER_ITEMS.items():
+                text += (
+                    "\n\n"
+                    + label
+                    + "\n"
+                    + paragraphs_text(getattr(result.stakeholder_items, field))
+                )
+            text += "\n\n4.4 도메인 적용성"
+            for field, label in DOMAIN_ITEMS.items():
+                text += (
+                    "\n\n"
+                    + label
+                    + "\n"
+                    + paragraphs_text(getattr(result.domain_items, field))
+                )
+        else:
+            text = paragraphs_text(getattr(result, name))
+        sections.append(Section(title=title, content=text))
     sections.append(Section(title="REFERENCE", content=""))
     return ReportOutput(
         sections=sections, cited_evidence_ids=list(dict.fromkeys(cited))
@@ -105,7 +171,10 @@ evaluation_method, perspectives, implications, limitations)의 문단 목록이�
 각 문단의 text에는 본문만 작성하고 대괄호나 출처 ID를 직접 쓰지 않는다.
 그 문단을 뒷받침하는 출처는 evidence_ids에서 스키마가 허용한 ID만 선택한다.
 근거가 없는 한계·미확인 설명의 evidence_ids는 빈 목록으로 둔다.
-목차와 인용 표시는 코드가 생성한다. 4.1~4.4 소제목은 perspectives의 text에 포함한다.
+perspectives.maturity에는 성숙도, perspectives.market에는 시장성 문단을 작성한다.
+stakeholder_items의 다섯 필드에는 두 기술 각각의 편익, 부담, 근거, 미확인을 작성한다.
+domain_items의 여섯 필드에는 두 기술 각각의 판단, 수치, 실험 조건, 한계를 작성한다.
+4.1~4.4 제목과 항목명, 대목차와 인용 표시는 코드가 생성한다.
 REFERENCE와 cited_evidence_ids 필드는 반환하지 않는다."""
 
 
@@ -134,17 +203,18 @@ gaps·domain·quality_feedback 같은 입력 필드명은 근거 ID가 아니므
 
 def write_report(state, *, chain=None):
     criteria(state, REPORT_SECTION_TITLES)
-    inputs = require_values(state, "synthesis", *EVALUATION_KEYS.values())
-    evidence = collect_evidence(state)
+    require_values(state, "synthesis", *EVALUATION_KEYS.values())
+    evidence = collect_report_evidence(state)
     payload = {
-        **inputs,
+        "reviewed_scope": report_assessment_scope(state),
         "domain": state["domain_and_criteria"],
         "evidence": evidence,
         "previous_report": state.get("report"),
         "revision_request": state.get("retry_request"),
         "quality_feedback": state.get("quality_result"),
-        "gaps": state.get("evidence_gaps"),
         "allowed_evidence_ids": list(evidence),
+        "source_audit_date_utc": datetime.now(UTC).date().isoformat(),
+        "audit_scope": "기존 조사에서 확인된 출처와 해시 검증된 primary PDF 본문. 추가 웹 검색은 하지 않음.",
     }
     schema = cited_report_schema(evidence) if chain is None else None
     if schema is not None:
@@ -153,7 +223,9 @@ def write_report(state, *, chain=None):
             "사실 주장마다 해당 문단의 evidence_ids에서 정확한 근거 ID를 선택한다.",
         )
         chain = structured_chain(
-            schema, prompt + "\n" + CITED_REPORT_PROMPT, name="report_draft"
+            schema,
+            prompt + "\n" + CITED_REPORT_PROMPT + "\n" + CONTENT_RULES,
+            name="report_draft",
         )
     try:
         raw = chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
@@ -247,15 +319,24 @@ def printable_report(report, evidence):
         report["cited_evidence_ids"],
     )
     sources = {}
+    source_labels = {}
     numbers = {}
     for eid in cited:
         ref = evidence[eid]["source"]
         key = (ref.get("document"), ref.get("url"), ref.get("page"))
         if key not in sources:
             sources[key] = len(sources) + 1
+            source_labels[key] = (
+                evidence[eid].get("source_title") or ref.get("document") or "웹 자료"
+            )
+            if evidence[eid].get("source_version"):
+                source_labels[key] += "; " + evidence[eid]["source_version"]
+            source_labels[key] = re.sub(
+                r"^(.+?)\s+\1(?=\s|$)", r"\1", source_labels[key]
+            )
         numbers[eid] = sources[key]
     references = "\n".join(
-        f"[{number}] {document or '웹 자료'}"
+        f"[{number}] {source_labels[(document, url, page)]}"
         + (f", p. {page}" if page else "")
         + (f". {url}" if url else "")
         for (document, url, page), number in sources.items()
@@ -292,7 +373,7 @@ def export_pdf(state):
     ) as stream:
         temporary = Path(stream.name)
     try:
-        _write_pdf(printable_report(report, collect_evidence(state)), temporary)
+        _write_pdf(printable_report(report, collect_report_evidence(state)), temporary)
         count = len(PdfReader(temporary).pages)
         if count > 10:
             raise ReportTooLong(

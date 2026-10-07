@@ -1,6 +1,7 @@
 """Render and atomically publish a quality-approved report."""
 
 import os
+import re
 from html import escape
 from pathlib import Path
 
@@ -13,6 +14,8 @@ def _paragraph_text(
     text: str,
 ) -> str:
     """ReportLab Paragraph에서 안전하게 표시할 문자열로 변환한다."""
+    # Markdown headings are semantic text; hashes must not leak into the PDF.
+    text = re.sub(r"(?m)^\s*#{1,6}[ \t]+", "", text)
     escaped_text = escape(text)
 
     return escaped_text.replace(
@@ -215,12 +218,21 @@ def _write_pdf(
             )
         )
 
-        story.append(
-            Paragraph(
-                _paragraph_text(section_content),
-                content_style,
+        if section_title == "REFERENCE":
+            story.append(
+                Paragraph(
+                    "논문 인용의 p.는 제공된 원본 PDF의 물리 페이지 번호입니다.",
+                    reference_style,
+                )
             )
+        blocks = (
+            section_content.splitlines()
+            if section_title == "REFERENCE"
+            else re.split(r"\n\s*\n", section_content)
         )
+        for block in blocks:
+            if block.strip():
+                story.append(Paragraph(_paragraph_text(block.strip()), content_style))
 
         if section_title == "SUMMARY":
             story.append(
@@ -230,4 +242,10 @@ def _write_pdf(
                 )
             )
 
-    document.build(story)
+    def page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFont(font_name, 8)
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, str(doc.page))
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=page_number, onLaterPages=page_number)
