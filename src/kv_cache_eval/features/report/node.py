@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,9 @@ REPORT_SECTION_TITLES = (
     "6. 한계점",
     "REFERENCE",
 )
+
+# 줄바꿈은 문단·목록 경계일 수 있으므로 같은 줄의 연속 인용만 묶는다.
+NUMBERED_CITATION_GROUP = re.compile(r"\[\d+\](?:[ \t]*\[\d+\])+")
 
 
 class Section(BaseModel):
@@ -102,6 +106,17 @@ def write_report(state, *, chain=None):
     }
 
 
+def _number_citations(text, numbers):
+    """근거 ID를 번호로 바꾸고, 같은 인용 묶음의 중복 번호만 제거한다."""
+    numbered = CITATION.sub(lambda m: f"[{numbers[m.group(1).strip()]}]", text)
+
+    def unique_numbers(match):
+        citations = CITATION.findall(match.group())
+        return " ".join(f"[{number}]" for number in dict.fromkeys(citations))
+
+    return NUMBERED_CITATION_GROUP.sub(unique_numbers, numbered)
+
+
 def printable_report(report, evidence):
     """Translate only valid inline IDs to numbers, retaining source pages and URLs."""
     cited = validate_citations(
@@ -126,9 +141,7 @@ def printable_report(report, evidence):
     sections = [
         (
             title,
-            references
-            if title == "REFERENCE"
-            else CITATION.sub(lambda m: f"[{numbers[m.group(1).strip()]}]", text),
+            references if title == "REFERENCE" else _number_citations(text, numbers),
         )
         for title, text in report["sections"]
     ]

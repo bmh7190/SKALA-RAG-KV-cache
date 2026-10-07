@@ -192,3 +192,13 @@ REPORT_PDF_PATH=output/pdf/kv_cache_evaluation_main_ver2.pdf \
 - `graph/runner.py`는 실행·재개·체크포인트를, `graph/workflow.py`는 LangGraph 연결을 담당한다. 공개 진입점 `from kv_cache_eval.graph import run`은 유지한다. 결정 로그 포맷은 연결 코드 아래의 별도 함수로 옮겼다.
 - README에 실행 순서, 파일별 책임, State가 Supervisor와 작업자 사이를 도는 흐름을 추가했다.
 - 검증: 배정과 다른 결과 거부, 작업자의 입력 State 변경 격리, 진단 메모만 바뀌었을 때 결과 무효화 방지 사례를 추가했다. 오프라인 전체 105개 통과, 변경 Python 파일 Ruff I/F·포맷 및 Git 공백 검사 통과. 보고서 재시도 기본 1회, 인용 검증, SQLite 재개 동작을 유지했다.
+
+## 본문 인용 중복 수정 — fix/duplicate-citations
+
+- 최신 원격 `main-ver2`의 `8537cc7`에서 분기했다. 사용자 요청에 따라 브랜치명은 `fix/duplicate-citations`로 지정했다.
+- 원인: 서로 다른 근거 ID가 같은 문서·URL·페이지를 가리키면 같은 번호가 배정되지만, 기존 본문 치환은 각 ID를 그대로 번호로 바꿔 `[1] [1]`을 만들었다.
+- `printable_report()`의 출력 변환에서 같은 줄의 연속 인용 묶음 안에 중복된 번호만 제거한다. 첫 등장 순서를 유지하고, 다른 출처·다른 문장·줄바꿈·문단 경계는 유지한다. State의 근거 ID와 본문은 변경하지 않는다.
+- 회귀 테스트 6개 추가: 동일 출처의 서로 다른 ID, 동일 ID 반복, 다른 페이지와 문장, 줄바꿈 경계, 원본 불변성, 미확인 ID 거부. 오프라인 전체 111개 통과, 변경 Python 파일 Ruff I/F·포맷 검사 통과.
+- 저장된 실제 실행 `main-ver2-20261007-7/state.json`의 보고서와 기존 품질 판정으로 PDF 출력만 재실행했다. 외부 모델 호출은 없다. 원본 PDF와 체크포인트는 보존했다.
+- 새 PDF: `output/pdf/kv_cache_evaluation_citations_fixed.pdf`, 5쪽. 추출 텍스트 비교에서 중복 인용 묶음 11곳 → 0곳, 인용 표기와 공백을 제외한 전체 본문·참고문헌 동일, 입력 State와 체크포인트 바이트 불변을 확인했다. 전체 5쪽 렌더링을 육안 검사했다.
+- 이 PDF는 기존 실행 결과의 표시 수정본이며, 새 보고서 재시도 상한에서 모델을 다시 실행한 결과는 아니다. 출력 PDF는 로컬 결과물로 보관하고 코드·테스트·기록을 커밋한다.
