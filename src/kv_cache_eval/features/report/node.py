@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
+from kv_cache_eval.common.errors import REPORT_TOO_LONG, AgentFailure
 from kv_cache_eval.common.evidence import (
     CITATION,
     require_values,
@@ -37,8 +38,10 @@ REPORT_SECTION_TITLES = (
 NUMBERED_CITATION_GROUP = re.compile(r"\[\d+\](?:[ \t]*\[\d+\])+")
 
 
-class ReportValidationError(ValueError):
+class ReportValidationError(AgentFailure):
     """Safe, locally constructed feedback; never contains provider request bodies."""
+
+    expose_message = True
 
 
 class Section(BaseModel):
@@ -275,8 +278,11 @@ def printable_report(report, evidence):
     return {**report, "sections": sections}
 
 
-class ReportTooLong(ValueError):
-    pass
+class ReportTooLong(AgentFailure):
+    """PDF가 쪽수 상한을 넘었다. Supervisor는 보고서 압축 재작성을 요청한다."""
+
+    code = REPORT_TOO_LONG
+    expose_message = True
 
 
 def export_pdf(state):

@@ -1,5 +1,6 @@
 """실행 오류 재시도와 근거 부족 재조사의 범위·상한을 결정한다."""
 
+from kv_cache_eval.common.errors import INVALID_RESULT, REPORT_TOO_LONG
 from kv_cache_eval.common.tasks import EVALUATION_KEYS
 from kv_cache_eval.features.supervisor.catalog import CRITERIA
 from kv_cache_eval.features.supervisor.transitions import dispatch, finish
@@ -9,7 +10,7 @@ from kv_cache_eval.features.technical_research.prompts import category_for_gap
 def failed_work(state, result):
     agent, error = result["agent"], result["error"]
     state["last_error"] = error
-    if error["code"] == "report_too_long":
+    if error["code"] == REPORT_TOO_LONG:
         return dispatch(
             state,
             "report",
@@ -30,7 +31,7 @@ def failed_work(state, result):
             f"{error['code']}: 일시적 오류 재시도",
             state.get("retry_request"),
         )
-    if error["code"] == "invalid_result" and agent in (
+    if error["code"] == INVALID_RESULT and agent in (
         "report",
         "synthesis",
         "quality",

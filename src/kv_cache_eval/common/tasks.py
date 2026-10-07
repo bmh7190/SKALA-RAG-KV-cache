@@ -11,10 +11,6 @@ EVALUATION_KEYS = {
 }
 
 
-class InputBudgetExceeded(ValueError):
-    pass
-
-
 def technologies(state):
     target = (state.get("retry_request") or {}).get("technology")
     if target is not None and target not in state["selected_technologies"]:
