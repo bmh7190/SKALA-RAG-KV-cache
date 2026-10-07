@@ -1,10 +1,10 @@
 # Supervisor 리팩토링 공통 개발 계약
 
-계약 버전: 1.0 초안 · 적용 대상: KIVI와 InfiniGen 다관점 평가 프로젝트
+계약 버전: 1.1 구현 반영 · 적용 대상: KIVI와 InfiniGen 다관점 평가 프로젝트
 
-세 명이 기존 조사·평가 기능을 재사용하면서 Supervisor 구조를 구현하기 위한 공통 기준이다. A는 흐름 제어, B는 조사·평가와 공통 State, C는 종합·보고서와 품질 평가를 담당한다. 이 문서는 구현할 계약이며, 아래 신규 필드와 노드는 현재 코드에 반영된 상태가 아니다.
+`main-ver2`에 통합 구현한 Supervisor의 인터페이스와 동작을 설명한다. A·B·C 표기는 이후 팀 인계를 위한 책임 구분이며, 이번 구현은 담당 구분 없이 전체 범위를 반영했다. A는 흐름 제어, B는 조사·평가와 공통 State, C는 종합·보고서와 품질 평가를 뜻한다.
 
-과제 기준은 [Multi-Agent Orchestration 안내](https://actually-war-1ea.notion.site/Multi-Agent-Orchestration-3d57f4c866938020a992fcc97e942ee6)다. 아래 타입·횟수·처리 방식은 팀 개발을 위한 설계안이다.
+과제 기준은 [Multi-Agent Orchestration 안내](https://actually-war-1ea.notion.site/Multi-Agent-Orchestration-3d57f4c866938020a992fcc97e942ee6)다. 아래 타입·횟수·처리 방식은 이 프로젝트가 선택한 구현이며 과제 자체의 지정값은 아니다.
 
 ## 공통 원칙
 
@@ -17,13 +17,13 @@
 
 ## 담당과 수정 범위
 
-아래 경로는 저장소 루트 기준이다. 신규 경로는 구현 시 생성한다.
+아래 경로는 저장소 루트 기준이며 모두 구현되어 있다.
 
 | 담당 | 소유 코드 | 책임 |
 |---|---|---|
-| A | `src/kv_cache_eval/graph/`, 신규 `features/supervisor/`, 실행·추적 설정 | 라우팅, 근거 충분성 결정, 재작업 배정, 종료·복구, 통합 |
+| A | `src/kv_cache_eval/graph/`, `features/supervisor/`, 실행·추적 설정 | 라우팅, 근거 충분성 결정, 재작업 배정, 종료·복구, 통합 |
 | B | `src/kv_cache_eval/common/state.py`, `common/schemas.py`, `features/technical_research/`, `maturity/`, `market/`, `stakeholders/`, `domain/` | 공통 타입, 작업 범위 해석, 부분 결과 병합, 근거·평가, 오류 구분 |
-| C | `src/kv_cache_eval/features/synthesis/`, `report/`, 신규 `quality/` | 종합, 보고서 초안·수정, 품질 판정, 최종 PDF |
+| C | `src/kv_cache_eval/features/synthesis/`, `report/`, `quality/` | 종합, 보고서 초안·수정, 품질 판정, 최종 PDF |
 
 각 담당자는 자기 기능의 테스트와 README 설명을 작성한다. A가 통합 테스트·그래프·트레이스를 정리한다. 공통 스키마를 수정해야 하는 작업은 B와 계약을 먼저 맞춘다.
 
@@ -86,7 +86,7 @@ State에서는 작업 데이터와 제어 정보를 주석으로 구분한다. �
 | `step_count` | `int` | `0` | A가 하위 노드 호출을 배정할 때마다 1 증가 |
 | `max_steps` | `int` | `30` | 초기 전체 호출 상한 |
 | `agent_calls` | `dict[AgentName, int]` | `{}` | A가 노드별 호출 횟수 관리 |
-| `max_agent_calls` | `int` | `4` | 초기 노드별 호출 상한 |
+| `max_agent_calls` | `int` | `6` | 초기 노드별 호출 상한 |
 | `report_revision` | `int` | `0` | 최초 초안은 0, 이후 보고서 재생성 배정 시 A가 1 증가 |
 | `max_report_revisions` | `int` | `2` | 최초 초안 이후 추가 생성 상한 |
 | `status` | `RunStatus` | `"running"` | A가 전체 실행 상태 관리 |
@@ -94,7 +94,9 @@ State에서는 작업 데이터와 제어 정보를 주석으로 구분한다. �
 | `termination_reason` | `str \| None` | `None` | A가 완료·미완료·실패 사유 기록 |
 | `trace_id` | `str` | 실행별 UUID | 초기화 후 불변. 체크포인트·외부 로그와 연결 |
 
-30·4·2는 초기 설정값이다. 세 값은 설정으로 변경할 수 있으며 실제 성공 횟수를 보장하는 값이 아니다. 기존 `research_round`, `max_research_rounds`는 B가 조사 코드의 의존성을 제거한 뒤 삭제한다. 전환 중에도 전체 실행과 종료의 기준은 위 제어 필드로 통일한다.
+30·6·2는 기본 설정값이다. 세 값은 설정으로 변경할 수 있으며 실제 성공 횟수를 보장하는 값이 아니다. 기존 `research_round`, `max_research_rounds`는 삭제했고 Supervisor 호출 예산으로 통일했다. 같은 기술·관점의 추가 검색은 한 번 수행한 뒤 재평가한다.
+
+추가 제어 필드로 `question`(원래 질문), `pending_work`(노드별 재검토 요청), `gap_attempts`(기술·관점별 추가 검색 횟수), `decision_reason`(최신 라우팅 사유)을 유지한다. `AgentExecution.changed_keys`는 실제 바뀐 결과 키 목록이며 진단 notes만 바뀐 것은 근거 변경으로 계산하지 않는다.
 
 ## 재작업 요청과 실행 결과
 
@@ -117,6 +119,7 @@ class AgentExecution(TypedDict):
     status: ExecutionStatus
     gaps: list[EvidenceGap]
     error: AgentError | None
+    changed_keys: list[str]
 
 class EvidenceDecision(TypedDict):
     ready: bool
@@ -138,7 +141,7 @@ class EvidenceDecision(TypedDict):
 
 `needs_evidence`는 `gaps`를 한 건 이상 반환하고 `error=None`으로 둔다. `failed`는 `error`를 반드시 반환한다. `completed`도 검토한 한계나 공백을 `gaps`에 남길 수 있으나 보고서 작성 가능 여부는 Supervisor가 별도로 결정한다.
 
-예상 가능한 API 오류는 구조화한다. `timeout`, `rate_limit` 등 일시적 오류만 제한적으로 재시도하고, `authentication`, `invalid_request`, `input_budget_exceeded`는 동일 요청을 반복하지 않는다. 예상하지 못한 예외는 A의 실행 경계에서 실패로 기록하고 원래 예외 정보는 외부 로그에 남긴다. 로그에 API 키를 포함하지 않는다.
+예상 가능한 API 오류는 구조화한다. `timeout`, `rate_limit` 등 일시적 오류만 제한적으로 재시도하고, `authentication`, `invalid_request`, `input_budget_exceeded`는 동일 요청을 반복하지 않는다. 예상하지 못한 예외는 공통 실행 경계에서 실패로 기록한다. State와 결정 로그에는 예외 클래스와 정규화한 오류 코드만 남기며, 요청 본문·API 키가 포함될 수 있는 원문 예외는 기록하지 않는다.
 
 하위 노드는 자신의 결과 필드와 `last_result`만 반환한다. `last_result.step`은 입력의 `step_count`와 같아야 하며, Supervisor는 현재 배정한 노드·단계와 일치하는 결과만 처리한다. `updates`라는 별도 중첩 필드는 만들지 않는다.
 
@@ -168,7 +171,8 @@ class EvidenceDecision(TypedDict):
       "code": "input_budget_exceeded",
       "message": "InfiniGen 평가 요청이 입력 한도를 초과했다.",
       "retryable": false
-    }
+    },
+    "changed_keys": []
   }
 }
 ```
@@ -189,11 +193,11 @@ B의 조사·평가 노드는 부분 결과를 기존 결과와 병합한 뒤 �
 
 반환에 필드가 없으면 기존 값을 유지한다. `None`은 명시적인 무효화에 사용하고, 소유 노드가 임의로 다른 노드의 값을 지우지 않는다.
 
-A는 결과가 실제로 변경됐을 때 관련 완료 표시를 해제한다. 새 결과의 존재만 확인하지 말고 변경 여부를 비교한다. 초기 구현은 아래처럼 보수적으로 처리한다.
+Supervisor는 결과가 실제로 변경됐을 때 관련 완료 표시를 해제한다. 새 결과의 존재만 확인하지 말고 변경 여부를 비교한다. 초기 구현은 아래처럼 보수적으로 처리한다.
 
 | 변경된 데이터 | 재검토 대상 |
 |---|---|
-| 기술 조사 근거 | 네 관점 평가, 종합, 보고서, 품질, PDF |
+| 기술 조사 근거 | 성숙도·이해관계자·도메인 평가, 종합, 보고서, 품질, PDF. 자체 검색을 쓰는 완료된 시장성은 보존 |
 | 시장 근거·시장성 평가 | 종합, 보고서, 품질, PDF |
 | 그 외 관점 평가 | 종합, 보고서, 품질, PDF |
 | 종합 | 보고서, 품질, PDF |
@@ -201,9 +205,9 @@ A는 결과가 실제로 변경됐을 때 관련 완료 표시를 해제한다. 
 
 평가 재검토에서는 기존 값을 보존하되 `completed_agents`에서 제외해 오래된 결과임을 나타낸다. 종합·보고서·품질·PDF는 관련 값을 `None`으로 해제한다. 이 무효화는 A가 수행하는 예외적인 결과 필드 갱신이다. `report_revision`은 초안을 무효화해도 초기화하지 않는다.
 
-근거·관점 평가가 바뀌면 `evidence_decision`과 `evidence_gaps`도 `None`으로 해제하고 충분성을 다시 검사한다. 현재 성숙도·이해관계자 평가는 기술 조사 근거를 입력으로 사용한다. 시장 근거 등 새로운 입력 의존성을 추가하면 위 재검토 표와 구현을 함께 확장한다.
+근거·관점 평가가 바뀌면 관련 평가의 완료 상태를 해제하고 충분성을 다시 검사한다. 기존 근거 검사 결과는 진행 중 작업을 판단하는 과거 정보일 뿐 보고서 승인에 재사용하지 않는다. 현재 성숙도·이해관계자 평가는 기술 조사 근거를 입력으로 사용한다. 시장 근거 등 새로운 입력 의존성을 추가하면 위 재검토 표와 구현을 함께 확장한다.
 
-노드가 일부 항목만 완료했다고 해서 바로 `completed_agents`에 넣지 않는다. A가 해당 노드의 필요한 범위 전체를 점검하고, 근거가 부족한 항목을 어떻게 처리할지도 판단한 뒤 완료로 표시한다. 초기에는 영향받는 관점 전체를 재검토 대상으로 두되 재작업 요청은 필요한 기술·항목으로 한정한다.
+`completed_agents`는 현재 요청 결과를 수락했다는 표시다. 부분 결과는 기존 결과와 병합하며 전체 범위의 누락·근거 부족은 별도 `evidence_decision`으로 점검한다. 완료 표시만으로 보고서 작성을 승인하지 않는다. 새 기술 근거가 추가되면 의존하는 관점에 해당 기술의 재검토 요청을 만들며, 근거가 그대로인 보완 검색 후에는 처음 부족했던 항목만 다시 평가한다.
 
 ## 근거 충분성과 라우팅
 
