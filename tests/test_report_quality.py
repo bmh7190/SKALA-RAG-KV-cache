@@ -65,6 +65,54 @@ def judge(coverage="pass"):
 
 
 class ReportQualityTests(unittest.TestCase):
+    def test_runtime_report_uses_selected_ids_and_code_owned_headings(self):
+        from kv_cache_eval.features.report.node import BODY_FIELDS
+
+        def factory(schema, prompt, **kwargs):
+            self.assertIn("CitedReport", schema.model_json_schema()["title"])
+            return RunnableLambda(
+                lambda _: {
+                    name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
+                    for name in BODY_FIELDS
+                }
+            )
+
+        with patch(
+            "kv_cache_eval.features.report.node.structured_chain", side_effect=factory
+        ):
+            report = write_report(ready_state())["report"]
+        self.assertEqual(
+            [title for title, _ in report["sections"]], list(REPORT_SECTION_TITLES)
+        )
+        self.assertEqual(report["cited_evidence_ids"], ["kivi:a"])
+        self.assertEqual(report["sections"][0][1], "검증된 설명 [kivi:a]")
+
+    def test_runtime_schema_rejects_fabricated_ids_and_inline_gaps(self):
+        from pydantic import ValidationError
+
+        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+
+        schema = cited_report_schema({"kivi:a": {}})
+        for text, ids in (("설명", ["kivi:invented"]), ("설명 [gaps]", [])):
+            raw = {
+                name: [{"text": "설명", "evidence_ids": ["kivi:a"]}]
+                for name in BODY_FIELDS
+            }
+            raw["summary"] = [{"text": text, "evidence_ids": ids}]
+            with self.assertRaises(ValidationError):
+                schema.model_validate(raw)
+
+    def test_runtime_empty_section_is_rejected(self):
+        from pydantic import ValidationError
+
+        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+
+        schema = cited_report_schema({"kivi:a": {}})
+        raw = {name: [{"text": "설명", "evidence_ids": []}] for name in BODY_FIELDS}
+        raw["perspectives"] = []
+        with self.assertRaises(ValidationError):
+            schema.model_validate(raw)
+
     def test_report_subheading_is_rejected_by_output_schema(self):
         s = ready_state()
         raw = {
