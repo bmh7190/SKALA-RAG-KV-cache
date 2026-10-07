@@ -166,3 +166,11 @@ REPORT_PDF_PATH=output/pdf/kv_cache_evaluation_main_ver2.pdf \
 - Graph 생성부터 조사 함수까지 중복 전달하던 `user_question` 인자를 없애고, 질문 생성기가 `State.question`을 읽도록 통일했다. 재개 실행에서도 체크포인트에 저장한 원래 질문을 사용한다.
 - 기술 조사 문서와 기존 질문 전달 테스트를 갱신했다. 예전 CLI 명령을 유지하는 `run_infinigen.py`는 호환성 진입점으로 남겼다.
 - 검증: 외부 통신을 차단한 전체 92개 테스트 통과. 질문 전달·이전 근거 재사용·SQLite 재개를 포함한다. 변경한 Python 파일의 Ruff I/F 검사 통과.
+
+### 모델 설정 검증 공통화
+
+- `common/config.py`의 `model_settings()`로 provider·모델·API 키 검증과 셸 우선순위 처리를 모았다. 공통 LangChain 팩터리와 도메인 실행부가 같은 검증을 사용한다.
+- 도메인의 별도 파일 탐색, `LM_PROVIDER` 별칭, 양의 유한 timeout 검사, 한 평가 안에서의 설정 고정과 API 오류 분류는 유지했다. 공통 환경 로딩과 도메인의 환경 비변경 파일 읽기는 각각의 용도에 맞게 유지했다.
+- 공백뿐인 모델·키는 누락으로 처리한다. Judge 모델이 비어 있으면 생성 모델로 돌아가고, LangChain에는 검증한 키와 `max_retries=0`을 명시적으로 전달한다.
+- 검증: 셸 값 우선·빈 셸 값의 파일 fallback 차단·provider 별칭 충돌·Judge 선택·timeout·설정 고정·비밀값 비노출 등 설정 회귀 테스트 9개 추가. 전체 오프라인 101개 테스트 통과, 변경한 Python 파일 Ruff I/F 및 포맷 검사 통과.
+- 외부 모델 호출이나 PDF 재생성은 수행하지 않았다. 보고서 추가 작성 상한 1회는 기존 정책을 유지한다.

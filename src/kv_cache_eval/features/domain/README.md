@@ -16,6 +16,8 @@ uv sync --locked --extra llm-openai
 
 실제 평가에는 `LLM_PROVIDER=openai` 또는 `LM_PROVIDER=openai`, `LLM_MODEL`, `OPENAI_API_KEY`가 필요합니다. 설정은 실행 환경이나 작업 디렉터리에서 상위로 찾은 `.env`에서 읽습니다. 별도 설정 파일은 `DOMAIN_ENV_FILE`로 지정할 수 있습니다. `EMBEDDING_MODEL`은 기술 조사 단계의 설정이며 도메인 노드에서 사용하지 않습니다.
 
+모델·키·provider 검증은 `common/config.py`의 공통 설정 함수를 사용하며 실행 환경 값이 파일보다 우선합니다. 도메인 실행부는 파일 탐색과 `DOMAIN_LLM_TIMEOUT_SECONDS`(기본 60초, 양의 유한한 숫자), 평가 한 번 동안의 설정 고정, 도메인 오류 분류를 담당합니다.
+
 기술 조사 결과가 State에 들어온 뒤 그래프의 `domain` 노드가 `evaluate(state)`를 호출합니다. 이 폴더에는 단독 실행 CLI가 없습니다. 조사 결과가 없으면 모델을 호출하지 않고 미확인 평가를 반환합니다. 반면 모델 패키지·키·설정 오류는 명시적으로 알립니다.
 
 ## 점수와 근거

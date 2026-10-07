@@ -1,11 +1,12 @@
 """설정 파일을 실행 위치 또는 명시 경로에서 찾아 LLM에 연결한다."""
 
-import logging
 import math
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+
+from kv_cache_eval.common.config import model_settings
 
 
 class DomainConfigurationError(RuntimeError):
@@ -55,32 +56,6 @@ def _load_settings(dotenv_values):
     def setting(name):
         return (os.environ.get(name, file_values.get(name, "")) or "").strip()
 
-    # 두 이름을 지원하되, 같은 설정 계층에서 서로 다른 값이면 명시적으로 알린다.
-    provider_names = ("LLM_PROVIDER", "LM_PROVIDER")
-    provider_values = (
-        os.environ
-        if any(name in os.environ for name in provider_names)
-        else file_values
-    )
-    providers = {
-        (provider_values.get(name) or "").strip().lower()
-        for name in provider_names
-        if name in provider_values
-    }
-    if len(providers) > 1:
-        raise DomainConfigurationError(
-            "LLM_PROVIDER와 LM_PROVIDER 값이 서로 다릅니다. 같은 값으로 맞춰 주세요."
-        )
-    if providers != {"openai"}:
-        raise DomainConfigurationError(
-            "LLM_PROVIDER=openai 또는 LM_PROVIDER=openai 설정이 필요합니다"
-        )
-    settings = {name: setting(name) for name in ("LLM_MODEL", "OPENAI_API_KEY")}
-    file_model = (file_values.get("LLM_MODEL") or "").strip()
-    if "LLM_MODEL" in os.environ and file_model and settings["LLM_MODEL"] != file_model:
-        logging.getLogger(__name__).warning(
-            "실행 환경의 LLM_MODEL이 설정 파일과 달라 실행 환경 값을 사용합니다. 모델 설정을 확인하세요.",
-        )
     try:
         timeout = float(setting("DOMAIN_LLM_TIMEOUT_SECONDS") or "60")
         if not math.isfinite(timeout) or timeout <= 0:
@@ -89,15 +64,14 @@ def _load_settings(dotenv_values):
         raise DomainConfigurationError(
             "DOMAIN_LLM_TIMEOUT_SECONDS는 양의 유한한 숫자여야 합니다"
         ) from None
-    model_name = settings["LLM_MODEL"]
-    if not model_name or not settings["OPENAI_API_KEY"]:
-        raise DomainConfigurationError("LLM_MODEL과 OPENAI_API_KEY 설정이 필요합니다")
-    return dict(
-        model=model_name,
-        api_key=settings["OPENAI_API_KEY"],
-        timeout=timeout,
-        max_retries=0,
-    )
+    try:
+        return model_settings(
+            timeout=timeout,
+            file_values=file_values,
+            provider_names=("LLM_PROVIDER", "LM_PROVIDER"),
+        )
+    except ValueError as exc:
+        raise DomainConfigurationError(str(exc)) from None
 
 
 def invoke_structured(messages, schema):
