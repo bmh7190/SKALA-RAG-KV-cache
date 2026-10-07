@@ -1,0 +1,1 @@
+"""Hybrid report quality assessment."""

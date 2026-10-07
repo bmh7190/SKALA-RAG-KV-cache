@@ -15,3 +15,11 @@ def chat_model(*, role: str = 'generator', timeout: float = 120):
         raise ValueError('LLM_MODEL과 OPENAI_API_KEY 설정이 필요합니다')
     # Graph-level retries remain visible in checkpoints and traces.
     return ChatOpenAI(model=model.strip(), timeout=timeout, max_retries=0)
+
+
+def structured_chain(schema, system: str, *, role='generator', name='structured_generation'):
+    """Use native prompt templates and structured output; preserve LangChain tracing."""
+    from langchain_core.prompts import ChatPromptTemplate
+
+    prompt = ChatPromptTemplate.from_messages([('system', system), ('human', '{payload}')])
+    return (prompt | chat_model(role=role).with_structured_output(schema, method='json_schema')).with_config(run_name=name)
