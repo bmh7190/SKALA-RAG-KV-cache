@@ -37,7 +37,7 @@ class ScopeTests(unittest.TestCase):
             "reason": "조건 누락",
         }
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=AssertionError("no evidence"),
         ):
             result = evaluate(s)

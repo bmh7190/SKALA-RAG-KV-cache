@@ -11,6 +11,45 @@
 - **동적 처리:** 고정 fan-out 대신 상태 기반 조건부 edge를 사용합니다. 하위 노드는 모두 Supervisor로 반환합니다.
 - **Tools:** PDF RAG, FAISS, Tavily 웹 검색
 
+## 코드를 처음 읽는 순서
+
+먼저 아래 실행 경로를 따라 읽으면 됩니다. `features/*/node.py`는 각 기능의 진입점이며, 세부 검증 규칙은 같은 폴더의 역할별 모듈에 있습니다.
+
+```text
+main.py: main()
+  → graph/runner.py: run()                환경·State·체크포인트 준비, 실행·재개
+  → graph/workflow.py: build_graph()      LangGraph 노드와 edge 연결
+  → features/supervisor/node.py: supervise()
+       이전 결과 확인 → 조사 → 관점 평가 → 근거 충분성 → 보고서·품질·저장
+  → features/supervisor/execution.py: worker()
+       요청 범위 확인 → 기능 실행 → 결과 검증 → 실행 결과 반환
+  → 선택된 features/<기능>/node.py → Supervisor로 복귀
+```
+
+| 알고 싶은 내용 | 읽을 파일 |
+|---|---|
+| 다음 에이전트를 왜 선택했는가 | `features/supervisor/node.py` |
+| 배정 횟수·종료·기존 결과 무효화 | `features/supervisor/transitions.py` |
+| 실행 오류 재시도와 부족 근거 재조사 | `features/supervisor/retries.py` |
+| 작업자가 바꿀 수 있는 State와 검증 | `features/supervisor/catalog.py`, `execution.py` |
+| 도메인 평가의 전체 순서 | `features/domain/node.py` |
+| 도메인 초안·검토·한 번의 응답 보정 | `features/domain/assessment.py` |
+| 인용·측정값·검토 결과를 인정하는 기준 | `features/domain/validation.py`, `measurement.py` |
+| 보고서 생성과 품질 검사 | `features/report/node.py`, `features/quality/node.py` |
+| 공유 데이터의 의미와 초기값 | `common/state.py`, `common/schemas.py` |
+
+위 표의 경로는 `src/kv_cache_eval/` 기준입니다. 실행 진입점은 `from kv_cache_eval.graph import run`을 사용합니다.
+
+### State가 한 바퀴 도는 방식
+
+1. `supervise(state)`가 입력을 복사하고 `next_agent`, `retry_request`, 호출 횟수를 결정합니다.
+2. Graph가 `next_agent`에 해당하는 작업자로 이동합니다.
+3. `worker()`가 기능의 반환값을 검증하고 `last_result`를 붙입니다. 각 기능은 자신이 맡은 결과 필드만 반환합니다.
+4. LangGraph가 반환값을 State에 반영하고 Supervisor로 돌아갑니다.
+5. Supervisor는 새 근거로 무효화된 평가, 근거 부족, 품질 지적을 확인해 다음 단계를 선택합니다.
+
+도메인 평가를 예로 들면 `evaluate()` → `_evaluate_scope()` → `_prepare_inputs()` → `assess_payload()` → `build_result()` 순서입니다. 부분 재평가일 때만 마지막에 기존 평가와 병합합니다. 읽는 동안 모델 호출 내용을 알고 싶으면 `assessment.py`, 인용 검증 규칙을 알고 싶으면 `validation.py`로 내려가면 됩니다.
+
 ## Selected Technologies
 
 - **SW — KIVI:** KV cache 양자화로 GPU 메모리 사용량을 줄이는 접근
