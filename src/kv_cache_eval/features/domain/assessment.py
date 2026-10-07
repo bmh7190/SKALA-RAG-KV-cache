@@ -2,7 +2,7 @@
 
 import json
 
-from kv_cache_eval.common.tasks import InputBudgetExceeded
+from kv_cache_eval.common.errors import InputBudgetExceeded
 from kv_cache_eval.features.domain.prompt import (
     OUTPUT_SCHEMA,
     REPAIR_INSTRUCTIONS,

@@ -7,14 +7,8 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import TypeAdapter
 
 from kv_cache_eval.common import schemas
-from kv_cache_eval.common.tasks import (
-    EVALUATION_KEYS,
-    InputBudgetExceeded,
-    criteria,
-    technologies,
-)
-from kv_cache_eval.features.domain.results import DomainResponseError
-from kv_cache_eval.features.report.node import ReportTooLong, ReportValidationError
+from kv_cache_eval.common.errors import InvalidRequest, classify_error
+from kv_cache_eval.common.tasks import EVALUATION_KEYS, criteria, technologies
 from kv_cache_eval.features.supervisor.catalog import CRITERIA, OUTPUTS
 from kv_cache_eval.features.supervisor.evidence_policy import assessment_gaps
 
@@ -34,10 +28,6 @@ TYPES = {
     "quality_result": schemas.QualityResult,
     "pdf_path": str,
 }
-
-
-class InvalidRequest(ValueError):
-    """The supervisor requested a scope the worker cannot handle."""
 
 
 def worker(agent, function):
@@ -165,35 +155,3 @@ def _changed_keys(state, update):
         if old != new:
             changed.append(key)
     return changed
-
-
-def classify_error(error):
-    status = getattr(error, "status_code", None)
-    name = type(error).__name__.lower()
-    if isinstance(error, DomainResponseError):
-        code, retry = "response_repair_exhausted", False
-    elif isinstance(error, InvalidRequest):
-        code, retry = "invalid_request", False
-    elif isinstance(error, InputBudgetExceeded):
-        code, retry = "input_budget_exceeded", False
-    elif isinstance(error, ReportTooLong):
-        code, retry = "report_too_long", False
-    elif status in (401, 403) or "authentication" in name:
-        code, retry = "authentication", False
-    elif status == 429 or "ratelimit" in name:
-        code, retry = "rate_limit", True
-    elif "timeout" in name or isinstance(error, TimeoutError):
-        code, retry = "timeout", True
-    elif "connection" in name or (status is not None and status >= 500):
-        code, retry = "connection", True
-    elif isinstance(error, (ValueError, TypeError)):
-        code, retry = "invalid_result", False
-    else:
-        code, retry = "execution_error", False
-    # Never include raw provider bodies (which can contain requests/credentials).
-    message = (
-        str(error)
-        if isinstance(error, (ReportTooLong, ReportValidationError))
-        else f"{type(error).__name__}: {code}"
-    )
-    return {"code": code, "message": message, "retryable": retry}

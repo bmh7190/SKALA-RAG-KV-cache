@@ -1,9 +1,10 @@
 """미확인 평가와 최종 State 갱신값을 만든다. 모델을 호출하지 않는다."""
 
+from kv_cache_eval.common.errors import ResponseRepairExhausted
 from kv_cache_eval.features.domain.rubric import DOMAIN_RUBRIC
 
 
-class DomainResponseError(ValueError):
+class DomainResponseError(ResponseRepairExhausted):
     """Bounded rewriting could not produce a verifiable evaluation response."""
 
 
