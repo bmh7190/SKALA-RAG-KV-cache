@@ -14,7 +14,7 @@ from kv_cache_eval.common.tasks import (
     technologies,
 )
 from kv_cache_eval.features.domain.results import DomainResponseError
-from kv_cache_eval.features.report.node import ReportTooLong
+from kv_cache_eval.features.report.node import ReportTooLong, ReportValidationError
 from kv_cache_eval.features.supervisor.catalog import CRITERIA, OUTPUTS
 
 TYPES = {
@@ -194,7 +194,7 @@ def classify_error(error):
     # Never include raw provider bodies (which can contain requests/credentials).
     message = (
         str(error)
-        if isinstance(error, ReportTooLong)
+        if isinstance(error, (ReportTooLong, ReportValidationError))
         else f"{type(error).__name__}: {code}"
     )
     return {"code": code, "message": message, "retryable": retry}

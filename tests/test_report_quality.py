@@ -128,6 +128,97 @@ class PrintableCitationTests(unittest.TestCase):
 
 
 class ReportQualityTests(unittest.TestCase):
+    def test_runtime_report_uses_selected_ids_and_code_owned_headings(self):
+        from kv_cache_eval.features.report.node import BODY_FIELDS
+
+        def factory(schema, prompt, **kwargs):
+            self.assertIn("CitedReport", schema.model_json_schema()["title"])
+            return RunnableLambda(
+                lambda _: {
+                    name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
+                    for name in BODY_FIELDS
+                }
+            )
+
+        with patch(
+            "kv_cache_eval.features.report.node.structured_chain", side_effect=factory
+        ):
+            report = write_report(ready_state())["report"]
+        self.assertEqual(
+            [title for title, _ in report["sections"]], list(REPORT_SECTION_TITLES)
+        )
+        self.assertEqual(report["cited_evidence_ids"], ["kivi:a"])
+        self.assertEqual(report["sections"][0][1], "검증된 설명 [kivi:a]")
+
+    def test_runtime_schema_rejects_fabricated_ids_and_inline_gaps(self):
+        from pydantic import ValidationError
+
+        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+
+        schema = cited_report_schema({"kivi:a": {}})
+        for text, ids in (("설명", ["kivi:invented"]), ("설명 [gaps]", [])):
+            raw = {
+                name: [{"text": "설명", "evidence_ids": ["kivi:a"]}]
+                for name in BODY_FIELDS
+            }
+            raw["summary"] = [{"text": text, "evidence_ids": ids}]
+            with self.assertRaises(ValidationError):
+                schema.model_validate(raw)
+
+    def test_runtime_empty_section_is_rejected(self):
+        from pydantic import ValidationError
+
+        from kv_cache_eval.features.report.node import BODY_FIELDS, cited_report_schema
+
+        schema = cited_report_schema({"kivi:a": {}})
+        raw = {name: [{"text": "설명", "evidence_ids": []}] for name in BODY_FIELDS}
+        raw["perspectives"] = []
+        with self.assertRaises(ValidationError):
+            schema.model_validate(raw)
+
+    def test_report_subheading_is_rejected_by_output_schema(self):
+        s = ready_state()
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"]
+            ],
+            "cited_evidence_ids": ["kivi:a"],
+        }
+        raw["sections"].insert(5, {"title": "4.4 도메인 적용성", "content": "내용"})
+        with self.assertRaisesRegex(ValueError, "4장 content"):
+            write_report(s, chain=RunnableLambda(lambda _: raw))
+
+    def test_invalid_citation_feedback_reaches_retry_request(self):
+        from kv_cache_eval.features.supervisor.execution import classify_error
+        from kv_cache_eval.features.supervisor.retries import failed_work
+
+        s = ready_state()
+        s.update(step_count=1, agent_calls={"report": 1})
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"]
+            ],
+            "cited_evidence_ids": ["kivi:a", "market-infinigen-missing"],
+        }
+        raw["sections"][0]["content"] += " [gaps]"
+        try:
+            write_report(s, chain=RunnableLambda(lambda _: raw))
+        except ValueError as error:
+            result = {"agent": "report", "error": classify_error(error)}
+        else:
+            self.fail("unknown citations must fail")
+        update = failed_work(s, result)
+        reason = update["retry_request"]["reason"]
+        self.assertIn("gaps", reason)
+        self.assertIn("market-infinigen-missing", reason)
+        self.assertIn("allowed_evidence_ids", reason)
+
+    def test_provider_value_error_does_not_expose_credentials(self):
+        from kv_cache_eval.features.supervisor.execution import classify_error
+
+        error = classify_error(ValueError("request contains secret credential"))
+        self.assertNotIn("secret credential", error["message"])
+
     def test_pass_and_revision_bound_to_current_draft(self):
         s = ready_state()
         s["report_revision"] = 2
