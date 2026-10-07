@@ -16,6 +16,7 @@ from kv_cache_eval.common.evidence import (
 )
 from kv_cache_eval.common.llm import structured_chain
 from kv_cache_eval.common.tasks import EVALUATION_KEYS, criteria
+from kv_cache_eval.features.report.cover import CoverOutput, cover_from_state
 from kv_cache_eval.features.report.factual_checks import (
     FACTUAL_RULES,
     collect_report_evidence,
@@ -56,6 +57,7 @@ class Section(BaseModel):
 
 
 class ReportOutput(BaseModel):
+    cover: CoverOutput | None = None
     sections: list[Section]
     cited_evidence_ids: list[str]
 
@@ -83,6 +85,7 @@ def cited_report_schema(evidence):
     )
     return create_model(
         "CitedReport",
+        cover=(CoverOutput, ...),
         **{name: (list[paragraph], Field(min_length=1)) for name in BODY_FIELDS},
     )
 
@@ -99,11 +102,20 @@ def materialize_cited_report(result):
         sections.append(Section(title=title, content="\n\n".join(texts)))
     sections.append(Section(title="REFERENCE", content=""))
     return ReportOutput(
-        sections=sections, cited_evidence_ids=list(dict.fromkeys(cited))
+        cover=result.cover,
+        sections=sections,
+        cited_evidence_ids=list(dict.fromkeys(cited)),
     )
 
 
-CITED_REPORT_PROMPT = """출력은 고정된 일곱 필드(summary, background, technology_overview,
+CITED_REPORT_PROMPT = """cover에는 실제 질문·선정 기술·평가 영역·작성한 본문을 요약하는 표지 문구를 작성한다.
+cover.title은 80자 이하의 간결하고 중립적인 한국어 제목이다. 특정 제목을 그대로 반복하지 않는다.
+cover.subtitle은 비교 대상 등 제목을 보완하는 정보, cover.scope는 실제 적용 영역이다.
+subtitle은 선정 기술명을 중심으로 40자 이내를 권장하며 평가 기준 목록을 나열하지 않는다.
+scope에는 서비스 환경만 간결하게 쓰고 평가 기준 목록이나 장 제목을 나열하지 않는다.
+부제·영역이 제목과 중복되면 빈 문자열로 둔다. 사실 주장을 추가하거나 우열·성능 수치를 제목에 넣지 않는다.
+표지 필드에는 줄바꿈·인용 ID·대괄호를 쓰지 않는다. 작성자·날짜·소속은 생성하지 않는다.
+나머지 출력은 고정된 일곱 필드(summary, background, technology_overview,
 evaluation_method, perspectives, implications, limitations)의 문단 목록이다.
 각 문단의 text에는 본문만 작성하고 대괄호나 출처 ID를 직접 쓰지 않는다.
 그 문단을 뒷받침하는 출처는 evidence_ids에서 스키마가 허용한 ID만 선택한다.
@@ -140,6 +152,8 @@ def write_report(state, *, chain=None):
     inputs = require_values(state, "synthesis", *EVALUATION_KEYS.values())
     evidence = collect_report_evidence(state)
     payload = {
+        "question": state["question"],
+        "selected_technologies": state["selected_technologies"],
         **inputs,
         "domain": state["domain_and_criteria"],
         "evidence": evidence,
@@ -170,7 +184,8 @@ def write_report(state, *, chain=None):
     except ValidationError as error:
         if schema is not None:
             raise ReportValidationError(
-                "보고서 구조·인용 선택 오류: 일곱 필드의 문단에 text와 evidence_ids를 "
+                "보고서 구조·인용 선택 오류: cover에 title, subtitle, scope를 작성하고 "
+                "일곱 필드의 문단에 text와 evidence_ids를 "
                 "작성하세요. text에는 대괄호를 쓰지 않고 evidence_ids는 "
                 "allowed_evidence_ids에서만 선택하세요. 소제목은 4장 content에 해당하는 "
                 "perspectives 문단에 넣으세요."
@@ -224,6 +239,7 @@ def write_report(state, *, chain=None):
     )
     return {
         "report": {
+            "cover": (result.cover or cover_from_state(state)).model_dump(),
             "sections": [
                 (title, "" if title == "REFERENCE" else text)
                 for title, text in sections

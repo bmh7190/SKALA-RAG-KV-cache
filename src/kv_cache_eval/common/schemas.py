@@ -70,6 +70,7 @@ class Synthesis(TypedDict):
 
 
 class ReportDraft(TypedDict):
+    cover: NotRequired[dict[str, str]]  # 새 보고서는 생성 모델이 작성한 표지 제목을 포함한다.
     sections: list[tuple[str, str]]  # SUMMARY로 시작, REFERENCE로 끝나야 한다.
     cited_evidence_ids: list[str]
 

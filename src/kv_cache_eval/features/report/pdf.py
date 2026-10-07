@@ -6,6 +6,7 @@ from html import escape
 from pathlib import Path
 
 from kv_cache_eval.common.schemas import ReportDraft
+from kv_cache_eval.features.report.cover import report_cover
 
 DEFAULT_PDF_PATH = Path("output/pdf/kv_cache_evaluation_report.pdf")
 
@@ -23,7 +24,7 @@ def _cover_metadata():
     return values
 
 
-def _draw_cover(canvas, document, font_name, metadata):
+def _draw_cover(canvas, document, font_name, metadata, cover):
     """A separate A4 title page; body headings and evidence stay unchanged."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -47,6 +48,7 @@ def _draw_cover(canvas, document, font_name, metadata):
         alignment=TA_CENTER,
         block_width=None,
         bottom=None,
+        min_size=None,
     ):
         block_width = block_width or available
         style = ParagraphStyle(
@@ -60,6 +62,15 @@ def _draw_cover(canvas, document, font_name, metadata):
         )
         item = Paragraph(_paragraph_text(text), style)
         _, item_height = item.wrap(block_width, max_height)
+        while (
+            item_height > max_height
+            and min_size is not None
+            and style.fontSize > min_size
+        ):
+            style.fontSize -= 1
+            style.leading = leading * style.fontSize / size
+            item = Paragraph(_paragraph_text(text), style)
+            _, item_height = item.wrap(block_width, max_height)
         if item_height > max_height:
             raise ValueError(
                 "표지 정보가 지정된 공간을 초과합니다. 작성자·소속을 줄이세요."
@@ -68,14 +79,35 @@ def _draw_cover(canvas, document, font_name, metadata):
         item.drawOn(
             canvas, block_left, bottom if bottom is not None else top - item_height
         )
+        return item_height
 
     canvas.saveState()
     try:
-        paragraph("KV Cache 최적화 기술\n다관점 평가 보고서", height - 85 * mm, 25, 38)
-        paragraph("KIVI와 InfiniGen 비교", height - 125 * mm, 15, 23, muted)
-        paragraph(
-            "GPU 기반 클라우드 LLM 서비스 적용 평가", height - 144 * mm, 10, 17, muted
+        title_height = paragraph(
+            cover.title, height - 85 * mm, 25, 38, max_height=34 * mm, min_size=16
         )
+        cursor = height - 85 * mm - title_height - 10 * mm
+        if cover.subtitle:
+            subtitle_height = paragraph(
+                cover.subtitle,
+                cursor,
+                15,
+                23,
+                muted,
+                max_height=18 * mm,
+                min_size=10,
+            )
+            cursor -= subtitle_height + 8 * mm
+        if cover.scope:
+            paragraph(
+                cover.scope,
+                cursor,
+                10,
+                17,
+                muted,
+                max_height=22 * mm,
+                min_size=8,
+            )
         details = []
         if metadata["authors"]:
             details.append("작성자  " + metadata["authors"])
@@ -199,6 +231,7 @@ def _write_pdf(
     font_path = _resolve_font_path()
     font_name = "NanumGothic"
     metadata = _cover_metadata()
+    cover = report_cover(report)
 
     if font_name not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(
@@ -215,7 +248,7 @@ def _write_pdf(
         leftMargin=20 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title="KIVI와 InfiniGen 다관점 평가 보고서",
+        title=cover.title,
         author=metadata["authors"] or metadata["affiliation"],
     )
 
@@ -306,6 +339,8 @@ def _write_pdf(
 
     document.build(
         story,
-        onFirstPage=lambda canvas, doc: _draw_cover(canvas, doc, font_name, metadata),
+        onFirstPage=lambda canvas, doc: _draw_cover(
+            canvas, doc, font_name, metadata, cover
+        ),
         onLaterPages=lambda canvas, doc: _draw_body_footer(canvas, doc, font_name),
     )
