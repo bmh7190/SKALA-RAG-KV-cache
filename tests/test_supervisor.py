@@ -6,6 +6,7 @@ from pathlib import Path
 from supervisor_fixtures import evidence, nodes
 
 from kv_cache_eval.common.state import new_state
+from kv_cache_eval.common.tasks import technologies
 from kv_cache_eval.features.supervisor.execution import worker
 from kv_cache_eval.features.supervisor.node import supervise
 from kv_cache_eval.graph import build_graph, run
@@ -282,3 +283,49 @@ class SupervisorTests(unittest.TestCase):
         s = self.invoke(max_agent_calls=2)
         self.assertNotEqual(s["status"], "completed")
         self.assertNotIn("export_pdf", self.events)
+
+    def _research_with_empty_infinigen(self, empty_calls):
+        """InfiniGen 원문 근거가 처음 empty_calls번 조사에서 0건인 조사 대역."""
+        requests = []
+
+        def research(s):
+            requests.append(deepcopy(s.get("retry_request")))
+            self.events.append("technical_research")
+            empty = len(requests) <= empty_calls
+            return {
+                ("kivi_evidence" if tech == "KIVI" else "infinigen_evidence"): {
+                    "evidence": []
+                    if tech == "InfiniGen" and empty
+                    else [evidence(tech)],
+                    "notes": [],
+                }
+                for tech in technologies(s)
+            }
+
+        self.nodes["technical_research"] = research
+        return requests
+
+    def test_missing_research_is_retried_in_full_before_evaluations(self):
+        requests = self._research_with_empty_infinigen(empty_calls=1)
+        s = self.invoke()
+        self.assertEqual(self.events[:2], ["technical_research", "technical_research"])
+        self.assertEqual(
+            requests[1],
+            {
+                "technology": "InfiniGen",
+                "criteria": [],
+                "reason": "확인된 기술 원문 근거가 없음",
+            },
+        )
+        for agent in ("maturity", "market", "stakeholders", "domain"):
+            self.assertEqual(self.events.count(agent), 1, agent)
+        self.assertEqual(s["status"], "completed")
+
+    def test_missing_research_retry_happens_once(self):
+        requests = self._research_with_empty_infinigen(empty_calls=999)
+        s = self.invoke()
+        self.assertEqual(self.events[:2], ["technical_research", "technical_research"])
+        self.assertNotEqual(self.events[2], "technical_research")
+        full_retries = [r for r in requests if r is not None and r["criteria"] == []]
+        self.assertEqual(len(full_retries), 1)
+        self.assertEqual(s["status"], "incomplete")

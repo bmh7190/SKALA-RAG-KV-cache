@@ -11,7 +11,7 @@ from kv_cache_eval.features.supervisor.transitions import (
     dispatch,
     finish,
 )
-from kv_cache_eval.graph.gates import check_evidence
+from kv_cache_eval.graph.gates import check_evidence, research_gaps
 
 
 def supervise(input_state: State) -> State:
@@ -27,6 +27,11 @@ def supervise(input_state: State) -> State:
         return dispatch(
             state, "technical_research", "선정 기술의 원문 근거가 필요합니다"
         )
+    # 원문 근거가 0건인 기술을 그대로 평가하면 평가를 두 번 수행하게 된다.
+    # 기술별 재조사 1회는 retry_gap의 gap_attempts가 제한한다.
+    decision = retry_gap(state, research_gaps(state))
+    if decision is not None:
+        return decision
     decision = _dispatch_pending_evaluation(state, completed)
     if decision is not None:
         return decision
