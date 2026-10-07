@@ -23,13 +23,32 @@ QUESTION_TEMPLATES = (
     ResearchQuestion("problem", "{target}은 어떤 문제를 해결하려는가?"),
     ResearchQuestion("principle", "{target}의 핵심 설계 원리는 무엇인가?"),
     ResearchQuestion("mechanism", "{target}은 그 원리를 실제로 어떻게 구현하는가?"),
-    ResearchQuestion("experiment_conditions", "{target}의 실험 환경, 모델, 데이터 및 비교 조건은 무엇인가?"),
-    ResearchQuestion("performance_results", "{target}의 자원 사용량과 성능은 무엇을 어떻게 측정했는가?"),
-    ResearchQuestion("model_quality", "{target}이 결과 품질에 미치는 영향은 어떻게 측정되었는가?"),
+    ResearchQuestion(
+        "experiment_conditions",
+        "{target}의 실험 환경, 모델, 데이터 및 비교 조건은 무엇인가?",
+    ),
+    ResearchQuestion(
+        "performance_results",
+        "{target}의 자원 사용량과 성능은 무엇을 어떻게 측정했는가?",
+    ),
+    ResearchQuestion(
+        "model_quality", "{target}이 결과 품질에 미치는 영향은 어떻게 측정되었는가?"
+    ),
     ResearchQuestion("limitations", "{target}의 적용 조건과 한계는 무엇인가?"),
-    ResearchQuestion("independent_evaluation", "독립 또는 후속 문서는 {target}을 어떻게 평가했는가? 평가 주체와 비교 조건은 무엇인가?"),
-    ResearchQuestion("public_status", "{target}의 현재 공개 구현, 지원 또는 실제 채택은 무엇이 확인되는가?", "web"),
-    ResearchQuestion("paper_to_public", "{target}의 논문 제안과 현재 공개 구현에서 확인되는 내용은 어떻게 연결되는가?", "both"),
+    ResearchQuestion(
+        "independent_evaluation",
+        "독립 또는 후속 문서는 {target}을 어떻게 평가했는가? 평가 주체와 비교 조건은 무엇인가?",
+    ),
+    ResearchQuestion(
+        "public_status",
+        "{target}의 현재 공개 구현, 지원 또는 실제 채택은 무엇이 확인되는가?",
+        "web",
+    ),
+    ResearchQuestion(
+        "paper_to_public",
+        "{target}의 논문 제안과 현재 공개 구현에서 확인되는 내용은 어떻게 연결되는가?",
+        "both",
+    ),
 )
 
 
@@ -54,27 +73,55 @@ def category_for_gap(criterion: str, reason: str) -> str:
     return "problem"
 
 
-def questions_for_state(state: State, target: str, user_question: str | None = None) -> list[ResearchQuestion]:
+def questions_for_state(
+    state: State, target: str, user_question: str | None = None
+) -> list[ResearchQuestion]:
     domain = state["domain_and_criteria"]["domain"]
-    request = f" 사용자 요청(원문에서 검증할 내용): {user_question.strip()}" if user_question and user_question.strip() else ""
-    questions = [ResearchQuestion(item.id, f"{item.text.format(target=target)} 적용 도메인: {domain}"
-                                  + ("." + request if request else ""), item.route)
-                 for item in QUESTION_TEMPLATES]
+    request = (
+        f" 사용자 요청(원문에서 검증할 내용): {user_question.strip()}"
+        if user_question and user_question.strip()
+        else ""
+    )
+    questions = [
+        ResearchQuestion(
+            item.id,
+            f"{item.text.format(target=target)} 적용 도메인: {domain}"
+            + ("." + request if request else ""),
+            item.route,
+        )
+        for item in QUESTION_TEMPLATES
+    ]
     request_scope = state.get("retry_request")
     if request_scope:
         from kv_cache_eval.common.tasks import criteria
+
         selected = criteria(state, [item.id for item in QUESTION_TEMPLATES])
-        return [ResearchQuestion(q.id, q.text + " 보완 사유: " + request_scope["reason"],
-                                q.route, q.category) for q in questions if q.id in selected]
+        return [
+            ResearchQuestion(
+                q.id,
+                q.text + " 보완 사유: " + request_scope["reason"],
+                q.route,
+                q.category,
+            )
+            for q in questions
+            if q.id in selected
+        ]
     gap_questions = []
     for index, gap in enumerate(state.get("evidence_gaps") or []):
         if gap["technology"] in (None, target):
             gap_text = f"{target}의 {gap['criterion']} 근거 공백: {gap['reason']}. 적용 도메인: {domain}"
-            public = any(term in gap_text for term in ("현재", "공개 구현", "지원", "채택", "배포", "최신"))
-            paper = any(term in gap_text for term in ("논문", "실험", "성능", "원리", "자원"))
+            public = any(
+                term in gap_text
+                for term in ("현재", "공개 구현", "지원", "채택", "배포", "최신")
+            )
+            paper = any(
+                term in gap_text for term in ("논문", "실험", "성능", "원리", "자원")
+            )
             route = "both" if public and paper else "web" if public else "rag"
             category = category_for_gap(gap["criterion"], gap["reason"])
-            gap_questions.append(ResearchQuestion(f"gap-{index}", gap_text + request, route, category))
+            gap_questions.append(
+                ResearchQuestion(f"gap-{index}", gap_text + request, route, category)
+            )
     return gap_questions + questions
 
 

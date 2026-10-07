@@ -1,8 +1,8 @@
 """근거, 평가, 종합 결과를 연결하는 최소 자료형."""
 
 from typing import Literal
-from typing_extensions import NotRequired, TypedDict
 
+from typing_extensions import NotRequired, TypedDict
 
 Technology = Literal["KIVI", "InfiniGen"]
 BasisStatus = Literal["unverified", "source_checked", "inferred", "public_estimate"]
@@ -15,9 +15,9 @@ class SourceRef(TypedDict):
 
 
 class ExperimentContext(TypedDict, total=False):
-    model: str
-    workload: str
-    baseline: str
+    model: str | None
+    workload: str | None
+    baseline: str | None
 
 
 class Evidence(TypedDict):
@@ -74,8 +74,15 @@ class ReportDraft(TypedDict):
 
 
 AgentName = Literal[
-    'technical_research', 'maturity', 'market', 'stakeholders', 'domain',
-    'synthesis', 'report', 'quality', 'export_pdf',
+    "technical_research",
+    "maturity",
+    "market",
+    "stakeholders",
+    "domain",
+    "synthesis",
+    "report",
+    "quality",
+    "export_pdf",
 ]
 
 
@@ -94,14 +101,16 @@ class AgentError(TypedDict):
 class AgentExecution(TypedDict):
     agent: AgentName
     step: int
-    status: Literal['completed', 'needs_evidence', 'failed']
+    status: Literal["completed", "needs_evidence", "failed"]
     gaps: list[EvidenceGap]
     error: AgentError | None
     changed_keys: NotRequired[list[str]]
 
 
-QualityCriterion = Literal['groundedness', 'neutrality', 'bias_control', 'perspective_coverage']
-CheckStatus = Literal['pass', 'fail', 'unknown']
+QualityCriterion = Literal[
+    "groundedness", "neutrality", "bias_control", "perspective_coverage"
+]
+CheckStatus = Literal["pass", "fail", "unknown"]
 
 
 class QualityIssue(TypedDict):

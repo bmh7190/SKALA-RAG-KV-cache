@@ -6,9 +6,9 @@ from hashlib import sha256
 from pydantic import BaseModel, Field
 
 from kv_cache_eval.common.schemas import (
-    Evidence,
     Evaluation,
     EvaluationResult,
+    Evidence,
     ResearchResult,
     Technology,
 )
@@ -27,6 +27,10 @@ from kv_cache_eval.features.market.rubric import (
     score_ecosystem_support,
     score_market_growth,
 )
+
+
+class UnknownSourceUrl(ValueError):
+    """The model cited a URL outside the supplied source set."""
 
 
 class CitedAssessment(BaseModel):
@@ -68,9 +72,7 @@ def _evidence_id(
     url: str,
 ) -> str:
     """기술명과 URL로 재현 가능한 Evidence ID를 만든다."""
-    digest = sha256(
-        url.encode("utf-8")
-    ).hexdigest()[:12]
+    digest = sha256(url.encode("utf-8")).hexdigest()[:12]
 
     return f"market-{technology.casefold()}-{digest}"
 
@@ -90,7 +92,7 @@ def _checked_urls(
         url = canonical_url(raw_url)
 
         if url not in hits_by_url:
-            raise ValueError(f"검색 결과에 없는 URL: {url}")
+            raise UnknownSourceUrl(f"검색 결과에 없는 URL: {url}")
 
         if url not in checked:
             checked.append(url)
@@ -115,7 +117,7 @@ def _checked_supports(
         url = canonical_url(support.source_url)
 
         if url not in hits_by_url:
-            raise ValueError(f"검색 결과에 없는 URL: {url}")
+            raise UnknownSourceUrl(f"검색 결과에 없는 URL: {url}")
 
         unique_key = (
             support.kind,
@@ -149,10 +151,7 @@ def _evaluation(
     has_basis = bool(
         urls
         and sources_checked
-        and (
-            assessment.judgment is not None
-            or score is not None
-        )
+        and (assessment.judgment is not None or score is not None)
     )
 
     return {
@@ -169,11 +168,7 @@ def _evaluation(
             for url in urls
         ],
         "uncertainty": assessment.uncertainty,
-        "basis_status": (
-            "source_checked"
-            if has_basis
-            else "unverified"
-        ),
+        "basis_status": ("source_checked" if has_basis else "unverified"),
     }
 
 
@@ -188,10 +183,7 @@ def materialize_analysis(
     검색 결과 밖 URL은 거부하며, 유효한 근거가 없으면
     해당 평가는 unverified 상태가 된다.
     """
-    hits_by_url = {
-        canonical_url(hit.url): hit
-        for hit in hits
-    }
+    hits_by_url = {canonical_url(hit.url): hit for hit in hits}
 
     growth_urls = _checked_urls(
         analysis.growth.source_urls,
@@ -208,10 +200,7 @@ def materialize_analysis(
         hits_by_url,
     )
 
-    support_urls = [
-        url
-        for _, url in checked_supports
-    ]
+    support_urls = [url for _, url in checked_supports]
 
     ecosystem_assessment_urls = _checked_urls(
         analysis.ecosystem.source_urls,
@@ -258,13 +247,10 @@ def materialize_analysis(
                 },
                 "experiment": None,
                 "limitations": [
-                    "웹 공개 자료 기반이며 비공개 도입 사례는 "
-                    "반영되지 않을 수 있음"
+                    "웹 공개 자료 기반이며 비공개 도입 사례는 반영되지 않을 수 있음"
                 ],
                 "verification_status": (
-                    "source_checked"
-                    if hit.source_checked
-                    else "unverified"
+                    "source_checked" if hit.source_checked else "unverified"
                 ),
             }
         )
@@ -272,17 +258,13 @@ def materialize_analysis(
     growth_score = (
         None
         if analysis.cagr_percent is None
-        else score_market_growth(
-            analysis.cagr_percent
-        )
+        else score_market_growth(analysis.cagr_percent)
     )
 
     adoption_score = (
         None
         if analysis.adoption_level is None
-        else score_commercial_adoption(
-            analysis.adoption_level
-        )
+        else score_commercial_adoption(analysis.adoption_level)
     )
 
     ecosystem_supports = [
@@ -294,11 +276,7 @@ def materialize_analysis(
     ]
 
     ecosystem_score = (
-        score_ecosystem_support(
-            ecosystem_supports
-        )
-        if ecosystem_urls
-        else None
+        score_ecosystem_support(ecosystem_supports) if ecosystem_urls else None
     )
 
     evaluations = [
@@ -308,10 +286,7 @@ def materialize_analysis(
             assessment=analysis.growth,
             score=growth_score,
             urls=growth_urls,
-            sources_checked=all(
-                hits_by_url[url].source_checked
-                for url in growth_urls
-            ),
+            sources_checked=all(hits_by_url[url].source_checked for url in growth_urls),
         ),
         _evaluation(
             technology=technology,
@@ -320,8 +295,7 @@ def materialize_analysis(
             score=adoption_score,
             urls=adoption_urls,
             sources_checked=all(
-                hits_by_url[url].source_checked
-                for url in adoption_urls
+                hits_by_url[url].source_checked for url in adoption_urls
             ),
         ),
         _evaluation(
@@ -331,8 +305,7 @@ def materialize_analysis(
             score=ecosystem_score,
             urls=ecosystem_urls,
             sources_checked=all(
-                hits_by_url[url].source_checked
-                for url in ecosystem_urls
+                hits_by_url[url].source_checked for url in ecosystem_urls
             ),
         ),
     ]
@@ -340,10 +313,7 @@ def materialize_analysis(
     return (
         {
             "evidence": evidence,
-            "notes": [
-                "시장성 웹 조사에서 실제 검색 결과로 확인된 "
-                "출처만 포함함"
-            ],
+            "notes": ["시장성 웹 조사에서 실제 검색 결과로 확인된 출처만 포함함"],
         },
         {
             "evaluations": evaluations,
@@ -353,9 +323,7 @@ def materialize_analysis(
 
 
 def merge_results(
-    results: Iterable[
-        tuple[ResearchResult, EvaluationResult]
-    ],
+    results: Iterable[tuple[ResearchResult, EvaluationResult]],
 ) -> tuple[ResearchResult, EvaluationResult]:
     """기술별 시장 조사 및 평가 결과를 하나로 합친다."""
     evidence: list[Evidence] = []
@@ -364,18 +332,10 @@ def merge_results(
     evaluation_notes: list[str] = []
 
     for research, evaluation in results:
-        evidence.extend(
-            research["evidence"]
-        )
-        evaluations.extend(
-            evaluation["evaluations"]
-        )
-        research_notes.extend(
-            research["notes"]
-        )
-        evaluation_notes.extend(
-            evaluation["notes"]
-        )
+        evidence.extend(research["evidence"])
+        evaluations.extend(evaluation["evaluations"])
+        research_notes.extend(research["notes"])
+        evaluation_notes.extend(evaluation["notes"])
 
     return (
         {

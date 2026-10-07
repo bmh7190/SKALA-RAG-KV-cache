@@ -33,3 +33,8 @@ llm-openai = ["langchain-openai>=1,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kv_cache_eval"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14,<1",
+]

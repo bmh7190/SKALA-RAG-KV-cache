@@ -4,7 +4,10 @@ import unittest
 
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.market.analysis import CitedAssessment, MarketAnalysis
-from kv_cache_eval.features.market.node import build_market_node, validate_runtime_config
+from kv_cache_eval.features.market.node import (
+    build_market_node,
+    validate_runtime_config,
+)
 from kv_cache_eval.graph.gates import check_evidence
 
 
@@ -12,12 +15,14 @@ class MarketNodeTest(unittest.TestCase):
     def test_injected_node_evaluates_both_technologies_without_network(self):
         def search(query):
             slug = str(abs(hash(query)))
-            return [{
-                "title": query,
-                "url": f"https://example.com/{slug}",
-                "content": query,
-                "raw_content": query,
-            }]
+            return [
+                {
+                    "title": query,
+                    "url": f"https://example.com/{slug}",
+                    "content": query,
+                    "raw_content": query,
+                }
+            ]
 
         def analyse(technology, hits):
             urls = [hit.url for hit in hits]
@@ -27,7 +32,9 @@ class MarketNodeTest(unittest.TestCase):
                 adoption_level="public_prototype_only",
                 adoption=CitedAssessment(judgment="프로토타입", source_urls=[urls[-2]]),
                 supports=[],
-                ecosystem=CitedAssessment(judgment="외부 지원 미확인", source_urls=[urls[-1]]),
+                ecosystem=CitedAssessment(
+                    judgment="외부 지원 미확인", source_urls=[urls[-1]]
+                ),
             )
 
         update = build_market_node(search, analyse)(new_state())
@@ -43,7 +50,9 @@ class MarketNodeTest(unittest.TestCase):
 
 class MarketRuntimeConfigTest(unittest.TestCase):
     def test_reports_all_missing_runtime_settings_together(self):
-        with self.assertRaisesRegex(RuntimeError, "TAVILY_API_KEY, LLM_PROVIDER, LLM_MODEL"):
+        with self.assertRaisesRegex(
+            RuntimeError, "TAVILY_API_KEY, LLM_PROVIDER, LLM_MODEL"
+        ):
             validate_runtime_config({})
 
     def test_openai_requires_its_api_key(self):

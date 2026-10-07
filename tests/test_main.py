@@ -5,25 +5,33 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import main as app
-
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.technical_research.node import research_technology
-from kv_cache_eval.graph import workflow as graph_workflow
 
 
 class MainTest(unittest.TestCase):
     def test_import_does_not_execute_graph_or_create_files(self):
         with tempfile.TemporaryDirectory() as directory:
-            environment = {key: value for key, value in os.environ.items()
-                           if key not in ("OPENAI_API_KEY", "TAVILY_API_KEY")}
+            environment = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("OPENAI_API_KEY", "TAVILY_API_KEY")
+            }
             environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
-            completed = subprocess.run([
-                os.sys.executable, "-c",
-                "import main; from pathlib import Path; assert not Path('data').exists()",
-            ], cwd=directory, env=environment, check=True, capture_output=True)
+            completed = subprocess.run(
+                [
+                    os.sys.executable,
+                    "-c",
+                    "import main; from pathlib import Path; assert not Path('data').exists()",
+                ],
+                cwd=directory,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
         self.assertEqual(completed.stdout, b"")
 
     def test_main_delegates_question_to_common_run(self):
@@ -33,13 +41,24 @@ class MainTest(unittest.TestCase):
         execute.assert_called_once_with(app.QUESTION)
 
     def test_question_reaches_research_workflow(self):
-        with patch("kv_cache_eval.features.technical_research.node.make_runtime_llm", return_value=object()), \
-             patch("kv_cache_eval.features.technical_research.workflow.research_questions",
-                   return_value={"evidence": [], "notes": []}) as workflow:
-            result = research_technology(new_state(), "KIVI", user_question=app.QUESTION)
+        with (
+            patch(
+                "kv_cache_eval.features.technical_research.node.make_runtime_llm",
+                return_value=object(),
+            ),
+            patch(
+                "kv_cache_eval.features.technical_research.workflow.research_questions",
+                return_value={"evidence": [], "notes": []},
+            ) as workflow,
+        ):
+            result = research_technology(
+                new_state(), "KIVI", user_question=app.QUESTION
+            )
         questions = workflow.call_args.args[0]
         self.assertEqual(len(questions), 10)
-        self.assertTrue(all(app.QUESTION in item.text and "KIVI" in item.text for item in questions))
+        self.assertTrue(
+            all(app.QUESTION in item.text and "KIVI" in item.text for item in questions)
+        )
         self.assertIn("KIVI 조사", result["notes"][-1])
 
     def test_unimplemented_graph_error_is_not_hidden(self):

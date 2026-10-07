@@ -1,15 +1,20 @@
 """전체 그래프에서 공유하는 값. 노드는 자신이 소유한 키만 갱신한다."""
 
+import re
 from typing import Literal, TypedDict
 from uuid import uuid4
-import re
 
 from kv_cache_eval.common.schemas import (
-    AgentName, AgentExecution, AgentError, RetryRequest, QualityResult, EvidenceDecision,
-    EvidenceGap,
+    AgentError,
+    AgentExecution,
+    AgentName,
     EvaluationResult,
+    EvidenceDecision,
+    EvidenceGap,
+    QualityResult,
     ReportDraft,
     ResearchResult,
+    RetryRequest,
     Synthesis,
     Technology,
 )
@@ -63,7 +68,6 @@ class State(SupervisorFields):
     report: ReportDraft | None
 
 
-
 class StateUpdate(SupervisorFields, total=False):
     kivi_evidence: ResearchResult | None
     infinigen_evidence: ResearchResult | None
@@ -78,24 +82,41 @@ class StateUpdate(SupervisorFields, total=False):
     report: ReportDraft | None
 
 
-
-def new_state(*, question: str = "", trace_id: str | None = None,
-              max_steps: int = 30, max_agent_calls: int = 6,
-              max_report_revisions: int = 2) -> State:
+def new_state(
+    *,
+    question: str = "",
+    trace_id: str | None = None,
+    max_steps: int = 30,
+    max_agent_calls: int = 6,
+    max_report_revisions: int = 2,
+) -> State:
     """완전한 초기 상태를 만든다. 부분 업데이트와 제어 필드 정의를 공유한다."""
     if max_steps < 1 or max_agent_calls < 1 or max_report_revisions < 0:
         raise ValueError("작업 상한은 양수, 보고서 수정 상한은 0 이상이어야 합니다")
     if trace_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", trace_id):
         raise ValueError("trace_id는 영문·숫자·밑줄·하이픈 1~100자여야 합니다")
     return {
-        "trace_id": trace_id or str(uuid4()), "question": question,
-        "next_agent": None, "retry_request": None, "completed_agents": [],
-        "pending_work": {}, "last_result": None, "last_error": None,
-        "step_count": 0, "max_steps": max_steps, "agent_calls": {},
-        "max_agent_calls": max_agent_calls, "gap_attempts": {},
-        "report_revision": 0, "max_report_revisions": max_report_revisions,
-        "quality_result": None, "evidence_decision": None, "pdf_path": None,
-        "status": "running", "termination_reason": None, "decision_reason": None,
+        "trace_id": trace_id or str(uuid4()),
+        "question": question,
+        "next_agent": None,
+        "retry_request": None,
+        "completed_agents": [],
+        "pending_work": {},
+        "last_result": None,
+        "last_error": None,
+        "step_count": 0,
+        "max_steps": max_steps,
+        "agent_calls": {},
+        "max_agent_calls": max_agent_calls,
+        "gap_attempts": {},
+        "report_revision": 0,
+        "max_report_revisions": max_report_revisions,
+        "quality_result": None,
+        "evidence_decision": None,
+        "pdf_path": None,
+        "status": "running",
+        "termination_reason": None,
+        "decision_reason": None,
         "selected_technologies": ("KIVI", "InfiniGen"),
         "domain_and_criteria": {
             "domain": "GPU 기반 클라우드 LLM 서비스",

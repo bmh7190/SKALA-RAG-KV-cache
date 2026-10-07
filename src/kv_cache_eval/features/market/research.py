@@ -23,20 +23,20 @@ class SearchHit(NamedTuple):
 Search = Callable[[str], Iterable[Mapping[str, Any]]]
 
 COMMON_MARKET_QUERIES = (
-    'AI inference market CAGR GPU cloud infrastructure forecast',
-    'AI optimized IaaS inference spending forecast',
+    "AI inference market CAGR GPU cloud infrastructure forecast",
+    "AI optimized IaaS inference spending forecast",
 )
 
 TECHNOLOGY_QUERIES: dict[Technology, tuple[str, ...]] = {
     "KIVI": (
-        'KIVI KV cache quantization production adoption',
-        'KIVI KV cache framework integration official documentation',
-        'KIVI KV cache external implementation GitHub',
+        "KIVI KV cache quantization production adoption",
+        "KIVI KV cache framework integration official documentation",
+        "KIVI KV cache external implementation GitHub",
     ),
     "InfiniGen": (
-        'InfiniGen dynamic KV cache production adoption',
-        'InfiniGen KV cache framework integration official documentation',
-        'InfiniGen KV cache external implementation GitHub',
+        "InfiniGen dynamic KV cache production adoption",
+        "InfiniGen KV cache framework integration official documentation",
+        "InfiniGen KV cache external implementation GitHub",
     ),
 }
 
@@ -55,13 +55,18 @@ def canonical_url(url: str) -> str:
     query = [
         (key, item)
         for key, item in parse_qsl(parts.query, keep_blank_values=True)
-        if not key.casefold().startswith("utm_") and key.casefold() not in _TRACKING_QUERY_KEYS
+        if not key.casefold().startswith("utm_")
+        and key.casefold() not in _TRACKING_QUERY_KEYS
     ]
     path = parts.path.rstrip("/") or "/"
-    return urlunsplit((parts.scheme.casefold(), parts.netloc.casefold(), path, urlencode(query), ""))
+    return urlunsplit(
+        (parts.scheme.casefold(), parts.netloc.casefold(), path, urlencode(query), "")
+    )
 
 
-def normalize_hits(query: str, raw_hits: Iterable[Mapping[str, Any]]) -> list[SearchHit]:
+def normalize_hits(
+    query: str, raw_hits: Iterable[Mapping[str, Any]]
+) -> list[SearchHit]:
     """검색 공급자 결과를 검증하고 URL 기준으로 중복 제거한다."""
     hits: list[SearchHit] = []
     seen_urls: set[str] = set()
@@ -77,23 +82,41 @@ def normalize_hits(query: str, raw_hits: Iterable[Mapping[str, Any]]) -> list[Se
             raise ValueError(f"제목 또는 본문이 없는 검색 결과: {url}")
         raw_score = raw.get("score")
         score = None if raw_score is None else float(raw_score)
-        hits.append(SearchHit(
-            query=query,
-            title=title,
-            url=url,
-            content=content[:_MAX_SOURCE_CHARS],
-            score=score,
-            source_checked=bool(raw_content),
-        ))
+        hits.append(
+            SearchHit(
+                query=query,
+                title=title,
+                url=url,
+                content=content[:_MAX_SOURCE_CHARS],
+                score=score,
+                source_checked=bool(raw_content),
+            )
+        )
         seen_urls.add(url)
     return hits
 
 
-def collect_market_sources(search: Search, technology: Technology) -> list[SearchHit]:
+def collect_market_sources(
+    search: Search, technology: Technology, criteria=None
+) -> list[SearchHit]:
     """공통 시장 수요와 기술별 채택/생태계 질의를 실행한다."""
     collected: list[SearchHit] = []
     seen_urls: set[str] = set()
-    for query in (*COMMON_MARKET_QUERIES, *TECHNOLOGY_QUERIES[technology]):
+    from kv_cache_eval.features.market.rubric import (
+        COMMERCIAL_ADOPTION,
+        ECOSYSTEM_SUPPORT,
+        MARKET_GROWTH,
+    )
+
+    selected = set(criteria or (MARKET_GROWTH, COMMERCIAL_ADOPTION, ECOSYSTEM_SUPPORT))
+    queries = []
+    if MARKET_GROWTH in selected:
+        queries.extend(COMMON_MARKET_QUERIES)
+    if COMMERCIAL_ADOPTION in selected:
+        queries.append(TECHNOLOGY_QUERIES[technology][0])
+    if ECOSYSTEM_SUPPORT in selected:
+        queries.extend(TECHNOLOGY_QUERIES[technology][1:])
+    for query in queries:
         for hit in normalize_hits(query, search(query)):
             if hit.url not in seen_urls:
                 collected.append(hit)

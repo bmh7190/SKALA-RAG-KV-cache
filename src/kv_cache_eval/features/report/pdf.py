@@ -1,10 +1,13 @@
 """Render and atomically publish a quality-approved report."""
+
 import os
-from pathlib import Path
 from html import escape
+from pathlib import Path
+
 from kv_cache_eval.common.schemas import ReportDraft
 
 DEFAULT_PDF_PATH = Path("output/pdf/kv_cache_evaluation_report.pdf")
+
 
 def _paragraph_text(
     text: str,
@@ -42,16 +45,12 @@ def _resolve_font_path() -> Path:
         font_path = Path(configured_path).expanduser()
     else:
         font_path = (
-            Path(__file__).resolve().parents[4]
-            / "assets"
-            / "fonts"
-            / "NanumGothic.ttf"
+            Path(__file__).resolve().parents[4] / "assets" / "fonts" / "NanumGothic.ttf"
         )
 
     if not font_path.exists():
         raise FileNotFoundError(
-            "한글 PDF 생성을 위한 폰트 파일을 찾을 수 없습니다: "
-            f"{font_path}"
+            f"한글 PDF 생성을 위한 폰트 파일을 찾을 수 없습니다: {font_path}"
         )
 
     return font_path
@@ -232,5 +231,3 @@ def _write_pdf(
             )
 
     document.build(story)
-
-

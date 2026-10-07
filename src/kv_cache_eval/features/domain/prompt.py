@@ -47,48 +47,75 @@ measurement가 null이면 false입니다. 초안의 수치 점수는 검사하�
 
 
 def object_schema(properties):
-    return {"type": "object", "properties": properties,
-            "required": list(properties), "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
 
 
 _PAIR = {
     "technology": {"type": "string", "enum": ["KIVI", "InfiniGen"]},
     "criterion": {"type": "string", "enum": list(DOMAIN_RUBRIC)},
 }
-_SUPPORT = object_schema({"evidence_id": {"type": "string"}, "quote": {"type": "string"}})
-_MEASUREMENT = object_schema({
-    "kind": {"type": "string", "enum": ["pair"]},
-    "baseline": {"type": "number"}, "optimized": {"type": "number"},
-    "unit": {"type": "string"}, "baseline_source": _SUPPORT,
-    "optimized_source": _SUPPORT,
-})
-_CHANGE = object_schema({
-    "kind": {"type": "string", "enum": ["reported_change"]},
-    "magnitude": {"type": "number"},
-    "direction": {"type": "string", "enum": ["increase", "decrease"]},
-    "source": _SUPPORT,
-})
-_ITEM = object_schema({
-    **_PAIR,
-    "judgment": {"type": ["string", "null"]},
-    "score": {"type": ["integer", "null"], "enum": [1, 2, 3, 4, 5, None]},
-    "rationale": {"type": ["string", "null"]},
-    "supports": {"type": "array", "items": _SUPPORT},
-    "measurement": {"anyOf": [_MEASUREMENT, _CHANGE, {"type": "null"}]},
-    "uncertainty": {"type": ["string", "null"]},
-})
+_SUPPORT = object_schema(
+    {"evidence_id": {"type": "string"}, "quote": {"type": "string"}}
+)
+_MEASUREMENT = object_schema(
+    {
+        "kind": {"type": "string", "enum": ["pair"]},
+        "baseline": {"type": "number"},
+        "optimized": {"type": "number"},
+        "unit": {"type": "string"},
+        "baseline_source": _SUPPORT,
+        "optimized_source": _SUPPORT,
+    }
+)
+_CHANGE = object_schema(
+    {
+        "kind": {"type": "string", "enum": ["reported_change"]},
+        "magnitude": {"type": "number"},
+        "direction": {"type": "string", "enum": ["increase", "decrease"]},
+        "source": _SUPPORT,
+    }
+)
+_ITEM = object_schema(
+    {
+        **_PAIR,
+        "judgment": {"type": ["string", "null"]},
+        "score": {"type": ["integer", "null"], "enum": [1, 2, 3, 4, 5, None]},
+        "rationale": {"type": ["string", "null"]},
+        "supports": {"type": "array", "items": _SUPPORT},
+        "measurement": {"anyOf": [_MEASUREMENT, _CHANGE, {"type": "null"}]},
+        "uncertainty": {"type": ["string", "null"]},
+    }
+)
 OUTPUT_SCHEMA = {
-    "title": "DomainAssessment", **object_schema({
-        "evaluations": {"type": "array", "items": _ITEM},
-        "notes": {"type": "array", "items": {"type": "string"}},
-    }),
+    "title": "DomainAssessment",
+    **object_schema(
+        {
+            "evaluations": {"type": "array", "items": _ITEM},
+            "notes": {"type": "array", "items": {"type": "string"}},
+        }
+    ),
 }
 VERIFY_SCHEMA = {
-    "title": "DomainEvidenceReview", **object_schema({
-        "reviews": {"type": "array", "items": object_schema({
-            **_PAIR, "supported": {"type": "boolean"},
-            "measurement_supported": {"type": "boolean"},
-            "rubric_supported": {"type": "boolean"}, "reason": {"type": "string"},
-        })},
-    }),
+    "title": "DomainEvidenceReview",
+    **object_schema(
+        {
+            "reviews": {
+                "type": "array",
+                "items": object_schema(
+                    {
+                        **_PAIR,
+                        "supported": {"type": "boolean"},
+                        "measurement_supported": {"type": "boolean"},
+                        "rubric_supported": {"type": "boolean"},
+                        "reason": {"type": "string"},
+                    }
+                ),
+            },
+        }
+    ),
 }

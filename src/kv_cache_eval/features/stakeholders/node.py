@@ -15,14 +15,14 @@ evidence_gaps로 잡히게 한다 — "자료가 없다는 이유만으로 낮�
 """
 
 from functools import partial
-from kv_cache_eval.common.llm import chat_model
-from kv_cache_eval.common.tasks import technologies, criteria, merge_evaluation
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from kv_cache_eval.common.llm import chat_model
 from kv_cache_eval.common.schemas import Evaluation, Evidence, Technology
 from kv_cache_eval.common.state import State, StateUpdate
+from kv_cache_eval.common.tasks import criteria, merge_evaluation, technologies
 from kv_cache_eval.features.stakeholders.criteria import STAKEHOLDER_CRITERIA
 
 _BasisStatus = Literal["unverified", "source_checked", "inferred", "public_estimate"]
@@ -49,10 +49,18 @@ class _StakeholderAssessmentBatch(BaseModel):
 
 
 class SupportsStakeholderLLMCall(Protocol):
-    def __call__(self, *, technology: Technology, domain: str, evidence: list[Evidence]) -> _StakeholderAssessmentBatch: ...
+    def __call__(
+        self, *, technology: Technology, domain: str, evidence: list[Evidence]
+    ) -> _StakeholderAssessmentBatch: ...
 
 
-def _default_llm_call(*, technology: Technology, domain: str, evidence: list[Evidence], selected=STAKEHOLDER_CRITERIA) -> _StakeholderAssessmentBatch:
+def _default_llm_call(
+    *,
+    technology: Technology,
+    domain: str,
+    evidence: list[Evidence],
+    selected=STAKEHOLDER_CRITERIA,
+) -> _StakeholderAssessmentBatch:
     """환경변수로 지정된 OpenAI 모델을 호출한다 (팀 기본값: LLM_MODEL=gpt-5.4-mini).
 
     테스트에서는 이 함수를 쓰지 않고 evaluate()에 가짜 llm_call을 주입한다 (langchain-openai
@@ -65,11 +73,14 @@ def _default_llm_call(*, technology: Technology, domain: str, evidence: list[Evi
         f"- {c.group}: {c.question}\n  점수 기준: {c.rubric}\n  확인할 근거 유형: {c.evidence_hint}"
         for c in selected
     )
-    evidence_text = "\n".join(
-        f"- id={e['id']} | claim={e['claim']} | excerpt={e['excerpt']} | "
-        f"experiment={e['experiment']} | source={e['source']} | limitations={e['limitations']}"
-        for e in evidence
-    ) or "(제공된 근거 없음)"
+    evidence_text = (
+        "\n".join(
+            f"- id={e['id']} | claim={e['claim']} | excerpt={e['excerpt']} | "
+            f"experiment={e['experiment']} | source={e['source']} | limitations={e['limitations']}"
+            for e in evidence
+        )
+        or "(제공된 근거 없음)"
+    )
 
     prompt = f"""당신은 KV cache 최적화 기술을 이해관계자 관점에서 평가하는 평가자입니다.
 평가 도메인: {domain}
@@ -108,21 +119,32 @@ def _evaluate_technology(
     evidence: list[Evidence],
     llm_call: SupportsStakeholderLLMCall,
     notes: list[str],
-    selected=STAKEHOLDER_CRITERIA, strict=False,
+    selected=STAKEHOLDER_CRITERIA,
+    strict=False,
 ) -> list[Evaluation]:
-    verified_evidence = [e for e in evidence if e["verification_status"] == "source_checked"]
+    verified_evidence = [
+        e for e in evidence if e["verification_status"] == "source_checked"
+    ]
     known_ids = {e["id"] for e in verified_evidence}
 
     if not verified_evidence:
-        notes.append(f"{technology}: 확인된(source_checked) 근거가 없어 이해관계자 평가를 보류함")
+        notes.append(
+            f"{technology}: 확인된(source_checked) 근거가 없어 이해관계자 평가를 보류함"
+        )
         batch = _StakeholderAssessmentBatch(assessments=[], notes=[])
     else:
         try:
-            batch = llm_call(technology=technology, domain=domain, evidence=verified_evidence)
-        except Exception as exc:  # LLM 호출 실패가 다른 기술 평가까지 망가뜨리지 않도록 격리
+            batch = llm_call(
+                technology=technology, domain=domain, evidence=verified_evidence
+            )
+        except (
+            Exception
+        ) as exc:  # LLM 호출 실패가 다른 기술 평가까지 망가뜨리지 않도록 격리
             if strict:
                 raise
-            notes.append(f"{technology}: LLM 호출 실패로 전체 판단 보류 처리 ({type(exc).__name__}: {exc})")
+            notes.append(
+                f"{technology}: LLM 호출 실패로 전체 판단 보류 처리 ({type(exc).__name__}: {exc})"
+            )
             batch = _StakeholderAssessmentBatch(assessments=[], notes=[])
 
     notes.extend(batch.notes)
@@ -134,7 +156,9 @@ def _evaluate_technology(
             continue
         if item.stakeholder_group in seen_groups:
             # 같은 이해관계자에 대해 두 번째 이상 반환된 평가는 무시한다 (첫 번째만 채택).
-            notes.append(f"{technology}/{item.stakeholder_group}: 같은 이해관계자에 대한 중복 평가를 무시함")
+            notes.append(
+                f"{technology}/{item.stakeholder_group}: 같은 이해관계자에 대한 중복 평가를 무시함"
+            )
             continue
         seen_groups.add(item.stakeholder_group)
         criterion = _STAKEHOLDER_BY_GROUP[item.stakeholder_group].criterion
@@ -142,7 +166,9 @@ def _evaluate_technology(
         evidence_ids = [eid for eid in item.evidence_ids if eid in known_ids]
         dropped = set(item.evidence_ids) - set(evidence_ids)
         if dropped:
-            notes.append(f"{technology}/{item.stakeholder_group}: 확인되지 않은 근거 ID 제외됨 {sorted(dropped)}")
+            notes.append(
+                f"{technology}/{item.stakeholder_group}: 확인되지 않은 근거 ID 제외됨 {sorted(dropped)}"
+            )
 
         judgment, score, basis_status = item.judgment, item.score, item.basis_status
         if not evidence_ids and (judgment is not None or score is not None):
@@ -166,7 +192,9 @@ def _evaluate_technology(
     for stakeholder in selected:
         if stakeholder.group in seen_groups:
             continue
-        notes.append(f"{technology}/{stakeholder.group}: 평가가 반환되지 않아 근거 부족으로 처리")
+        notes.append(
+            f"{technology}/{stakeholder.group}: 평가가 반환되지 않아 근거 부족으로 처리"
+        )
         evaluations.append(
             {
                 "technology": technology,
@@ -184,20 +212,42 @@ def _evaluate_technology(
     return evaluations
 
 
-def evaluate(state: State, llm_call: SupportsStakeholderLLMCall = _default_llm_call) -> StateUpdate:
+def evaluate(
+    state: State, llm_call: SupportsStakeholderLLMCall = _default_llm_call
+) -> StateUpdate:
     domain = state["domain_and_criteria"]["domain"]
     evaluations: list[Evaluation] = []
     notes: list[str] = []
 
-    selected = [c for c in STAKEHOLDER_CRITERIA if c.criterion in criteria(state, [c.criterion for c in STAKEHOLDER_CRITERIA])]
+    selected = [
+        c
+        for c in STAKEHOLDER_CRITERIA
+        if c.criterion in criteria(state, [c.criterion for c in STAKEHOLDER_CRITERIA])
+    ]
     if llm_call is _default_llm_call:
         llm_call = partial(_default_llm_call, selected=selected)
     for technology in technologies(state):
         evidence_key = "kivi_evidence" if technology == "KIVI" else "infinigen_evidence"
         research_result = state[evidence_key]
         if research_result is None:
-            notes.append(f"{technology}: 기술조사 결과가 아직 없어 이해관계자 평가를 진행하지 못함")
+            notes.append(
+                f"{technology}: 기술조사 결과가 아직 없어 이해관계자 평가를 진행하지 못함"
+            )
             continue
-        evaluations.extend(_evaluate_technology(technology, domain, research_result["evidence"], llm_call, notes, selected, strict=state.get("next_agent") == "stakeholders"))
+        evaluations.extend(
+            _evaluate_technology(
+                technology,
+                domain,
+                research_result["evidence"],
+                llm_call,
+                notes,
+                selected,
+                strict=state.get("next_agent") == "stakeholders",
+            )
+        )
 
-    return {"stakeholder_eval": merge_evaluation(state, "stakeholder_eval", {"evaluations": evaluations, "notes": notes})}
+    return {
+        "stakeholder_eval": merge_evaluation(
+            state, "stakeholder_eval", {"evaluations": evaluations, "notes": notes}
+        )
+    }
