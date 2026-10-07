@@ -5,7 +5,7 @@ import unittest
 from copy import deepcopy
 from unittest.mock import patch
 
-from test_domain import evidence
+from test_domain import evidence, structured_fake
 
 from kv_cache_eval.common.state import new_state
 from kv_cache_eval.features.domain.node import evaluate
@@ -87,7 +87,8 @@ class DomainRepairTests(unittest.TestCase):
             return {"evaluations": [draft()], "notes": []}
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured", side_effect=invoke
+            "kv_cache_eval.features.domain.node.invoke_structured",
+            side_effect=structured_fake(invoke),
         ) as llm:
             result = evaluate(s)["domain_eval"]
         self.assertEqual(llm.call_count, 4)
@@ -120,7 +121,8 @@ class DomainRepairTests(unittest.TestCase):
             return {"evaluations": [item], "notes": []}
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured", side_effect=invoke
+            "kv_cache_eval.features.domain.node.invoke_structured",
+            side_effect=structured_fake(invoke),
         ):
             row = evaluate(s)["domain_eval"]["evaluations"][0]
         self.assertEqual(count, 2)
@@ -181,7 +183,8 @@ class DomainRepairTests(unittest.TestCase):
             return reviews(json.loads(messages[1][1]))
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured", side_effect=invoke
+            "kv_cache_eval.features.domain.node.invoke_structured",
+            side_effect=structured_fake(invoke),
         ) as llm:
             row = evaluate(state("모델 품질"))["domain_eval"]["evaluations"][0]
         self.assertEqual(llm.call_count, 2)
@@ -208,7 +211,8 @@ class DomainRepairTests(unittest.TestCase):
             return reviews(json.loads(messages[1][1]), supported=False)
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured", side_effect=invoke
+            "kv_cache_eval.features.domain.node.invoke_structured",
+            side_effect=structured_fake(invoke),
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})
         self.assertEqual(llm.call_count, 3)

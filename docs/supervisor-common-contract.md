@@ -345,4 +345,6 @@ A는 지속 가능한 체크포인트 저장과 같은 실행 ID를 사용한 �
 
 ## 도메인 응답 보정 계약 (1.2)
 
-`Evaluation.failure_kind`는 미확인 도메인 항목의 선택 필드이며 `evidence_gap`과 `response_error`를 구분한다. 도메인은 초안 요청별 한 번만 기존 근거로 오류 항목을 다시 작성·검토한다. 응답 오류가 소진되면 공통 실행 경계는 `response_repair_exhausted`, `retryable=false`로 반환하고 Supervisor는 실패 종료한다. 정상적인 자료 부족만 재조사 대상으로 남는다. 정성 판단 검증과 점수 기준 검증이 분리돼 판단은 유지하면서 점수만 null로 보류할 수 있다.
+`Evaluation.failure_kind`는 미확인 도메인 항목의 선택 필드이며 `evidence_gap`과 `response_error`를 구분한다. 도메인은 오류 항목별 한 번만 기존 근거로 오류 항목을 다시 작성·검토한다. 응답 오류가 소진되면 공통 실행 경계는 `response_repair_exhausted`, `retryable=false`로 반환하고 Supervisor는 실패 종료한다. 정상적인 자료 부족만 재조사 대상으로 남는다. 정성 판단 검증과 점수 기준 검증이 분리돼 판단은 유지하면서 점수만 null로 보류할 수 있다.
+
+보정 요청은 한 번에 한 항목만 받는 동적 구조화 출력 스키마를 사용한다. 기술·항목·허용 근거 ID를 제한하고, measurement·score는 null로 고정한다. 모델은 인용문을 다시 쓰는 대신 원문 필드(claim 또는 excerpt)를 선택한다. 코드는 선택된 원문을 그대로 연결하고 기존 검토자가 판단의 지지 여부를 확인한다. 통과한 초기 정량 평가는 보정 대상에 포함하지 않는다.

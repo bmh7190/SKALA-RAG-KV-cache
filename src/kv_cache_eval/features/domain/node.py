@@ -23,6 +23,7 @@ from kv_cache_eval.features.domain.prompt import (
     SYSTEM_PROMPT,
     VERIFY_PROMPT,
     VERIFY_SCHEMA,
+    repair_schema,
 )
 from kv_cache_eval.features.domain.rubric import DOMAIN_RUBRIC, NUMERIC_CRITERIA
 from kv_cache_eval.features.domain.runtime import (
@@ -620,65 +621,92 @@ def _review_batches(payload, candidates, limit, rows, notes):
         yield batch
 
 
+def _review_candidates(raw, payload, active, notes, limit):
+    selected = {item["id"]: item for item in payload["evidence"]}
+    candidates = _candidates(raw, selected, active, notes)
+    for batch in _review_batches(payload, candidates, limit, active, notes):
+        reviews = invoke_structured(
+            _messages(
+                VERIFY_PROMPT,
+                {
+                    **payload,
+                    "drafts": [_review_draft(item) for item in batch.values()],
+                },
+            ),
+            VERIFY_SCHEMA,
+        )
+        _apply_reviews(reviews, batch, selected, payload["research_notes"], active)
+
+
+def _restore_quotes(raw, evidence):
+    """Resolve source selectors without inventing or rewriting any quoted text."""
+    for item in raw.get("evaluations", []):
+        for support in item.get("supports", []):
+            field = support.pop("quote_field", None)
+            source = evidence.get(support.get("evidence_id"), {})
+            support["quote"] = (
+                source.get(field, source.get("claim"))
+                if field in ("claim", "excerpt")
+                else None
+            )
+    return raw
+
+
 def _assess_payload(payload, rows, notes, limit):
-    """Validate once, then rewrite only response errors once using the same evidence."""
+    """Each erroneous pair gets one constrained rewrite with the same evidence."""
     selected = {item["id"]: item for item in payload["evidence"]}
     active = {
         key: value
         for key, value in rows.items()
         if key[0] in payload["technologies"] and key[1] in payload["rubric"]
     }
-    request = payload
-    for attempt in range(2):
-        system = SYSTEM_PROMPT + (REPAIR_INSTRUCTIONS if attempt else "")
-        if not _fits(request, limit) or _size(_messages(system, request)) > limit:
+    raw = invoke_structured(_messages(SYSTEM_PROMPT, payload), OUTPUT_SCHEMA)
+    _review_candidates(raw, payload, active, notes, limit)
+    rows.update(active)
+    failed = {
+        key: row
+        for key, row in active.items()
+        if row.get("failure_kind") == "response_error"
+    }
+    if not failed:
+        return
+    notes.append(f"response_repair: {len(failed)}개 항목을 같은 근거로 각각 1회 재작성")
+    for (technology, criterion), row in failed.items():
+        key = (technology, criterion)
+        request = {
+            **payload,
+            "technologies": [technology],
+            "rubric": {criterion: DOMAIN_RUBRIC[criterion]},
+            "repair_targets": [
+                {
+                    "technology": technology,
+                    "criterion": criterion,
+                    "reason": row["uncertainty"],
+                }
+            ],
+            "previous_drafts": [
+                item
+                for item in raw["evaluations"]
+                if isinstance(item, dict)
+                and (item.get("technology"), item.get("criterion")) == key
+            ],
+        }
+        system = SYSTEM_PROMPT + REPAIR_INSTRUCTIONS
+        if _size(_messages(system, request)) > limit:
             raise InputBudgetExceeded(
                 "도메인 응답 보정 요청이 입력 한도를 초과했습니다"
             )
-        raw = invoke_structured(_messages(system, request), OUTPUT_SCHEMA)
-        candidates = _candidates(raw, selected, active, notes)
-        for batch in _review_batches(payload, candidates, limit, active, notes):
-            reviews = invoke_structured(
-                _messages(
-                    VERIFY_PROMPT,
-                    {
-                        **payload,
-                        "drafts": [_review_draft(item) for item in batch.values()],
-                    },
-                ),
-                VERIFY_SCHEMA,
-            )
-            _apply_reviews(reviews, batch, selected, payload["research_notes"], active)
+        repaired = invoke_structured(
+            _messages(system, request), repair_schema(technology, criterion, selected)
+        )
+        active = {key: row}
+        _review_candidates(
+            _restore_quotes(repaired, selected), payload, active, notes, limit
+        )
         rows.update(active)
-        failed = {
-            key: row
-            for key, row in active.items()
-            if row.get("failure_kind") == "response_error"
-        }
-        if not failed:
-            return
-        if attempt:
-            notes.append(f"response_repair_exhausted: {len(failed)}개 항목 응답 오류")
-            return
-        notes.append(f"response_repair: {len(failed)}개 항목을 같은 근거로 1회 재작성")
-        targets = [
-            {"technology": t, "criterion": c, "reason": row["uncertainty"]}
-            for (t, c), row in failed.items()
-        ]
-        previous = [
-            item
-            for item in raw["evaluations"]
-            if isinstance(item, dict)
-            and (item.get("technology"), item.get("criterion")) in failed
-        ]
-        request = {
-            **payload,
-            "technologies": list(dict.fromkeys(t for t, _ in failed)),
-            "rubric": {c: DOMAIN_RUBRIC[c] for _, c in failed},
-            "repair_targets": targets,
-            "previous_drafts": previous,
-        }
-        active = failed
+    remaining = sum(rows[key].get("failure_kind") == "response_error" for key in failed)
+    if remaining:
+        notes.append(f"response_repair_exhausted: {remaining}개 항목 응답 오류")
 
 
 @evaluation_settings()

@@ -25,6 +25,34 @@ def evidence(technology, claim):
     }
 
 
+def structured_fake(fake):
+    """Adapt fixture quotes to the repair API's deterministic source selector."""
+
+    def invoke(messages, schema):
+        repair = (
+            schema.get("title") == OUTPUT_SCHEMA["title"]
+            and schema is not OUTPUT_SCHEMA
+        )
+        result = fake(messages, OUTPUT_SCHEMA if repair else schema)
+        if repair:
+            evidence = {x["id"]: x for x in json.loads(messages[1][1])["evidence"]}
+            for row in result["evaluations"]:
+                for support in row.get("supports", []):
+                    quote = support.pop("quote", None)
+                    source = evidence.get(support["evidence_id"], {})
+                    support["quote_field"] = next(
+                        (
+                            f
+                            for f in ("claim", "excerpt")
+                            if quote and quote in (source.get(f) or "")
+                        ),
+                        "invalid",
+                    )
+        return result
+
+    return invoke
+
+
 def complete_assessment(fake):
     """Fixtures return explicit unknowns for every other requested criterion."""
 
@@ -56,7 +84,7 @@ def complete_assessment(fake):
                     )
         return result
 
-    return invoke
+    return structured_fake(invoke)
 
 
 class DomainNodeTest(unittest.TestCase):
