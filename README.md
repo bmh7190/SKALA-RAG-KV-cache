@@ -2,219 +2,237 @@
 
 ## Subject
 
-본 프로젝트는 KV cache 최적화 기술인 **KIVI**와 **InfiniGen**을 선정하고, 공개 자료를 바탕으로 기술 성숙도·시장성·이해관계자·도메인 적합성을 비교 평가하는 Agentic RAG입니다. 기술의 우열을 단정하기보다 관점별 차이와 적용 조건, 근거의 한계를 정리합니다.
+**KIVI와 InfiniGen을 조사하고, 기술 성숙도·시장성·이해관계자·도메인 적합성을 비교하는 Supervisor 기반 멀티 에이전트 프로젝트입니다.**
+
+GPU 기반 클라우드 LLM 서비스를 적용 도메인으로 삼아, 공개 자료의 근거와 실험 조건·한계를 담은 PDF 보고서를 생성합니다.
 
 ## Overview
 
-- **Objective:** 두 기술을 복수 관점에서 비교 평가
-- **Pattern:** Supervisor. 근거 공백과 미완료 관점을 보고 필요한 노드에 작업을 배정합니다.
-- **동적 처리:** 고정 fan-out 대신 상태 기반 조건부 edge를 사용합니다. 하위 노드는 모두 Supervisor로 반환합니다.
-- **Tools:** PDF RAG, FAISS, Tavily 웹 검색
+- **Objective:** 두 기술을 동일한 네 관점으로 평가하고 적용 조건과 차이를 정리합니다.
+- **Pattern:** Supervisor. 작업 결과에 따라 재조사와 보고서 수정을 구분해 배정하기 위해 선택했습니다.
+- **동적 처리:** 미완료 관점·근거 부족·품질 지적을 보고 다음 작업과 범위를 결정합니다. 모든 작업자는 Supervisor로 복귀합니다.
 
-## 코드를 처음 읽는 순서
-
-먼저 아래 실행 경로를 따라 읽으면 됩니다. `features/*/node.py`는 각 기능의 진입점이며, 세부 검증 규칙은 같은 폴더의 역할별 모듈에 있습니다.
-
-```text
-main.py: main()
-  → graph/runner.py: run()                환경·State·체크포인트 준비, 실행·재개
-  → graph/workflow.py: build_graph()      LangGraph 노드와 edge 연결
-  → features/supervisor/node.py: supervise()
-       이전 결과 확인 → 조사 → 관점 평가 → 근거 충분성 → 보고서·품질·저장
-  → features/supervisor/execution.py: worker()
-       요청 범위 확인 → 기능 실행 → 결과 검증 → 실행 결과 반환
-  → 선택된 features/<기능>/node.py → Supervisor로 복귀
-```
-
-| 알고 싶은 내용 | 읽을 파일 |
-|---|---|
-| 다음 에이전트를 왜 선택했는가 | `features/supervisor/node.py` |
-| 배정 횟수·종료·기존 결과 무효화 | `features/supervisor/transitions.py` |
-| 실행 오류 재시도와 부족 근거 재조사 | `features/supervisor/retries.py` |
-| 작업자가 바꿀 수 있는 State와 검증 | `features/supervisor/catalog.py`, `execution.py` |
-| 도메인 평가의 전체 순서 | `features/domain/node.py` |
-| 도메인 초안·검토·한 번의 응답 보정 | `features/domain/assessment.py` |
-| 인용·측정값·검토 결과를 인정하는 기준 | `features/domain/validation.py`, `measurement.py` |
-| 보고서 생성과 품질 검사 | `features/report/node.py`, `features/quality/node.py` |
-| 공유 데이터의 의미와 초기값 | `common/state.py`, `common/schemas.py` |
-
-위 표의 경로는 `src/kv_cache_eval/` 기준입니다. 실행 진입점은 `from kv_cache_eval.graph import run`을 사용합니다.
-
-### State가 한 바퀴 도는 방식
-
-1. `supervise(state)`가 입력을 복사하고 `next_agent`, `retry_request`, 호출 횟수를 결정합니다.
-2. Graph가 `next_agent`에 해당하는 작업자로 이동합니다.
-3. `worker()`가 기능의 반환값을 검증하고 `last_result`를 붙입니다. 각 기능은 자신이 맡은 결과 필드만 반환합니다.
-4. LangGraph가 반환값을 State에 반영하고 Supervisor로 돌아갑니다.
-5. Supervisor는 새 근거로 무효화된 평가, 근거 부족, 품질 지적을 확인해 다음 단계를 선택합니다.
-
-도메인 평가를 예로 들면 `evaluate()` → `_evaluate_scope()` → `_prepare_inputs()` → `assess_payload()` → `build_result()` 순서입니다. 부분 재평가일 때만 마지막에 기존 평가와 병합합니다. 읽는 동안 모델 호출 내용을 알고 싶으면 `assessment.py`, 인용 검증 규칙을 알고 싶으면 `validation.py`로 내려가면 됩니다.
+예를 들어 InfiniGen의 처리량 근거가 부족하면 해당 범위를 다시 조사하고 관련 평가를 갱신합니다. 보고서만 품질 미달이면 기존 근거로 보고서를 수정합니다. Supervisor의 배정·종료 판단은 규칙 기반 코드입니다.
 
 ## Selected Technologies
 
-- **SW — KIVI:** KV cache 양자화로 GPU 메모리 사용량을 줄이는 접근
-- **HW 메모리 활용 — InfiniGen:** KV 데이터를 CPU 호스트 메모리에 두고 필요한 데이터를 GPU로 가져오는 접근
+| 구분 | 기술 | 접근과 선정 이유 |
+|---|---|---|
+| SW | **KIVI** | 비대칭 2bit KV cache 양자화. 메모리 절감·처리량과 모델 품질 사이의 관계 평가 |
+| HW 메모리 활용 | **InfiniGen** | CPU의 KV cache를 선별해 GPU로 미리 적재. 전송 병목·지연시간·운영 복잡성 평가 |
 
-InfiniGen은 새로운 하드웨어 자체보다 CPU·GPU 메모리 계층을 활용하는 기술로 분류했습니다.
+InfiniGen은 CPU·GPU 메모리 계층을 활용하는 시스템 기술로 분류했습니다. 두 논문의 실험 조건이 달라 성능 배율만으로 우열을 정하지 않습니다.
 
 ## Features
 
-- PDF 논문과 공개 웹 자료에서 기술 원리·성능·한계 근거 수집
-- 기술 성숙도(TRL), 시장성, 이해관계자, 도메인 적합성 평가
-- 근거 ID를 PDF 페이지 또는 웹 URL과 연결
-- 기술·관점·항목을 지정한 부분 재조사와 기존 결과 병합
-- 실행 오류와 근거 부족을 구분하고 호출 상한 안에서 재시도
-- SQLite 체크포인트에서 같은 실행 ID로 중단 후 재개
-- **확증 편향 방지:** 확인된 출처·추론·미확인 정보를 구분하고, 상충 관계와 미해결 근거 공백을 보고서에 기록
-- 보고서 초안 → 구조 검사와 LLM Judge → 수정 → 통과한 PDF 저장
-- 참고문헌 포함 10쪽 제한, 임시 파일 검증 후 최종 경로로 교체
+### 조사와 평가
+
+- **근거 수집:** PDF 5개·총 140쪽을 대상으로 RAG 검색하고, 공개 구현·시장 정보는 Tavily로 조사합니다.
+- **출처 추적:** 주장마다 근거 ID·발췌·PDF 페이지 또는 URL을 연결합니다.
+- **부분 재작업:** 기술·항목·보완 이유를 지정해 재조사하고 기존 평가와 병합합니다.
+- **실행 복구:** SQLite 체크포인트에 결과를 저장하고 같은 실행 ID로 중단 지점에서 재개합니다.
+
+### 확증 편향 방지
+
+원논문·독립 평가·배경 자료의 역할을 구분하고 다른 기술의 성과를 평가 대상에 옮기지 않습니다. 유리한 결과뿐 아니라 반대 근거와 제약을 함께 기록하며, 자료가 부족한 항목은 판단·점수를 보류합니다. 출처가 연결된 사실과 보고서의 추론도 구분합니다.
+
+### 보고서 품질 평가
+
+목차·본문 누락과 인용 ID를 먼저 검사한 뒤, LLM Judge가 아래 기준을 `pass / fail / unknown`으로 판정합니다.
+
+| 기준 | 확인 내용 |
+|---|---|
+| 근거 충실성 | 주요 사실과 수치가 인용한 원문으로 뒷받침되는가 |
+| 중립성 | 조건 없는 추천이나 서로 다른 실험의 직접 순위화가 없는가 |
+| 편향 통제 | 반대 근거·한계·특정 출처에 대한 의존성을 다루는가 |
+| 관점 커버리지 | 두 기술의 네 관점에 판단·이유·조건·한계가 있는가 |
+
+최신 보고서가 네 기준을 모두 통과해야 PDF를 저장합니다. 미달 시 수정 이유를 전달해 **추가 작성은 기본 1회**, 초안 포함 최대 2회로 제한합니다. 형식·인용 오류와 품질 미달은 같은 재작성 예산을 사용합니다.
+
+PDF는 실제 본문 인용으로 참고문헌을 만들고 같은 인용 묶음의 중복 번호를 정리합니다. 임시 파일에서 참고문헌 포함 **10쪽 이하**인지 확인한 뒤 최종 파일을 교체합니다.
 
 ## Tech Stack
 
-- **Framework:** LangGraph, LangChain
-- **LLM / Generator:** OpenAI 모델 (`LLM_MODEL` 환경변수로 지정)
-- **LLM / Judge:** `JUDGE_MODEL`을 지정할 수 있으며, 생략하면 `LLM_MODEL` 사용
-- **Persistence:** LangGraph `SqliteSaver`
-- **Observability:** LangSmith 기본 추적과 로컬 결정 로그
-- **Retrieval:** FAISS dense 벡터 검색
-- **Embedding:** `BAAI/bge-m3`
-- **Retrieval 평가:** InfiniGen 고정 질문 12개 기준 HitRate@5 **0.75(9/12)**, MRR@5 **0.576**
+| 구분 | 사용 기술 |
+|---|---|
+| Runtime / Framework | Python 3.11, uv / LangGraph, LangChain |
+| LLM / Generator | OpenAI `gpt-5.4-mini` — 확인한 실행 설정, `LLM_MODEL`로 지정 |
+| LLM / Judge | `JUDGE_MODEL` 지정 가능, 생략하면 Generator와 같은 모델 사용 |
+| Retrieval / Embedding | FAISS dense 검색 / `BAAI/bge-m3` |
+| Web / PDF | Tavily / PyPDFLoader, ReportLab, pypdf |
+| 실행 저장 / 추적 | SQLite 체크포인트 / 로컬 JSONL, 선택적으로 LangSmith |
 
-검색 지표는 관련 페이지를 찾는 성능이며, 생성된 평가의 사실 정확도를 의미하지 않습니다. KIVI 검색 평가는 아직 수행되지 않았습니다.
+**검색 평가:** InfiniGen 고정 질문 12개에서 HitRate@5 **0.75**, MRR@5 **0.576**을 기록했습니다(2026-09-22, 문서·물리 페이지 일치 기준). KIVI 검색 성능이나 보고서 사실 정확도를 나타내는 지표는 아닙니다.
 
 ## Agents
 
-- **Supervisor:** 완료 상태·근거 충분성·수정 지적에 따른 규칙 기반 라우팅. 선행 조건과 종료 가드는 코드로 검증
-
-- **Technical Research:** KIVI·InfiniGen의 PDF와 웹 자료 검색, 근거 추출
-- **Maturity:** 공개 근거를 바탕으로 기술 성숙도 평가
-- **Market:** 시장 규모·채택 현황·생태계 평가
-- **Stakeholders:** 이해관계자별 영향 평가
-- **Domain:** GPU 기반 클라우드 LLM 서비스 적용 조건 평가
-- **Synthesis:** 관점별 차이와 상충 관계 종합
-- **Report:** 근거 ID가 보존된 보고서 초안 생성·수정
-- **Quality:** Groundedness·중립성·편향 통제·네 관점 커버리지 검사
-- **Export PDF:** 현재 버전의 품질 판정을 확인하고 PDF 저장
+| 노드 | 역할 |
+|---|---|
+| Supervisor | 결과·근거 부족·호출 예산을 확인해 다음 작업 또는 종료 결정 |
+| Technical Research | 두 기술의 PDF RAG·웹 조사와 근거 추출 |
+| Maturity | 공개 근거의 검증 수준으로 TRL 추정 |
+| Market | 시장 규모·채택·생태계 조사 및 평가 |
+| Stakeholders | 운영자·개발자·사용자·경쟁 기술·투자 및 산업 관점 평가 |
+| Domain | 메모리·전송량·지연·처리량·품질·운영 난이도 평가 |
+| Synthesis | 관점별 차이·상충 관계·적용 조건 종합 |
+| Report / Quality | 근거를 인용한 보고서 작성·수정 / 구조·내용 검사 |
+| Export PDF | 최신 품질 판정 확인, 인용 번호 정리, PDF 저장 |
 
 ## State Schema
 
-| 항목 | 구현 |
-|---|---|
-| 제어·결과 분리 | `SupervisorFields`와 기존 근거·평가 필드 분리. `new_state()`가 독립 초기값 생성 |
-| 관측성 | 최신 판단 이유만 State에 유지. 전체 결정 기록은 JSONL·LangSmith |
-| 지속성 비용 | 원문은 PDF·벡터 저장소에 유지. State에는 추출 근거와 최신 결과, 현재 주의사항 |
-| 상관 | `trace_id`를 checkpoint의 `thread_id`와 LangSmith metadata에 연결 |
-| 재개·복구 | SQLite checkpoint, `invoke(None)`으로 재개. 완료된 조사 재실행 방지 |
-| 동시 처리 | 하위 노드 하나씩 실행. 중복 쓰기가 없어 누적 reducer 불필요 |
-| 종료 보장 | 전체 30회, 노드별 6회, 보고서 재시도 1회(초안 포함 총 2회)가 기본 상한 |
+[State 정의](src/kv_cache_eval/common/state.py)는 입력·작업 결과와 Supervisor 제어 정보를 구분합니다. 각 작업자는 자신이 맡은 결과 필드만 반환하며, 공통 `worker()`가 요청 범위와 반환값을 검증합니다.
 
-`completed`는 최신 보고서의 품질 통과와 PDF 저장 확인을 뜻합니다. 근거·품질 미달은 `incomplete`, 복구 불가 오류는 `failed`로 종료합니다. 일부 미확인 항목은 한계로 남길 수 있지만 관점 전체의 근거가 없는 경우에는 보고서로 넘어가지 않습니다. `completed_agents`는 검토한 결과의 유효성을 표시하며 충분성 판단은 `evidence_decision`으로 별도 확인합니다.
+| 설계 항목 | 적용 방식 |
+|---|---|
+| 제어 vs 페이로드 | `next_agent`·`retry_request`·호출 횟수·상태와 근거·평가·보고서 필드 분리 |
+| 관측성 위치 | State에는 최신 결과·이유, JSONL에는 배정 이력, LangSmith에는 선택적 호출 추적 |
+| 지속성 비용 | 전체 PDF·인덱스는 파일로, 추출 근거·결과는 State와 체크포인트로 관리 |
+| 상관관계 | `trace_id`로 체크포인트와 실행 기록 연결 |
+| 재개·복구 | 같은 실행 ID로 SQLite 체크포인트에서 재개 |
+| 동시 처리 | 한 번에 작업자 하나를 실행해 State 동시 쓰기 방지 |
+| 종료 보장 | 기본 배정 총 30회·노드별 6회·보고서 추가 작성 1회 |
+
+`completed`는 최신 품질 통과와 PDF 저장 완료, `incomplete`는 근거·품질 부족 또는 작업 예산 소진, `failed`는 복구 불가 오류나 오류 재시도 소진을 뜻합니다. 배정 횟수는 내부 LLM 호출 수와 다릅니다.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    START[입력 검증] --> S[Supervisor]
-    S --> R[기술 조사]
-    S --> M[성숙도]
-    S --> K[시장성]
-    S --> H[이해관계자]
-    S --> D[도메인]
-    R & M & K & H & D --> S
-    S --> Y[종합]
-    Y --> S
-    S --> W[보고서 초안]
-    W --> S
-    S --> Q[품질 평가]
-    Q --> S
-    S --> P[PDF 저장]
-    P --> S
-    S --> E[완료 또는 사유를 기록한 종료]
+flowchart TB
+    INPUT["질문 입력 · State 초기화"] --> SUPERVISOR
+    SUPERVISOR["Supervisor<br/>결과 확인 · 근거와 품질 판단 · 호출 예산 확인"]
+    SUPERVISOR -->|종료 조건 충족| END_STATE["완료 또는 사유를 기록한 종료"]
+
+    subgraph WORKERS["선택 가능한 작업 · 한 번에 하나씩 실행"]
+        direction LR
+        RESEARCH["조사<br/>Technical Research<br/>PDF RAG + 웹 검색"]
+        EVALUATION["관점 평가<br/>성숙도 · 시장성<br/>이해관계자 · 도메인"]
+        REPORT["종합 · 보고서<br/>종합 / 작성·수정<br/>품질 평가 / PDF 저장"]
+    end
+
+    SUPERVISOR -->|조사 필요| RESEARCH
+    SUPERVISOR -->|미완료·재검토| EVALUATION
+    SUPERVISOR -->|선행 조건 확인 후| REPORT
+
+    RESEARCH -.-> RESULT
+    EVALUATION -.-> RESULT
+    REPORT -.-> RESULT
+    RESULT["State에 결과 반영<br/>완료 여부 · 부족 근거 · 오류"] -.-> SUPERVISOR
+
+    classDef control fill:#eaf2ff,stroke:#2563eb,color:#172554
+    classDef research fill:#e6f6f3,stroke:#168570,color:#134e4a
+    classDef evaluation fill:#edf0ff,stroke:#6366b8,color:#312e81
+    classDef report fill:#fff0df,stroke:#c88427,color:#713f12
+    classDef state fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    class SUPERVISOR control
+    class RESEARCH research
+    class EVALUATION evaluation
+    class REPORT report
+    class INPUT,RESULT,END_STATE state
 ```
 
-Supervisor의 선택은 미완료·재검토 요청·호출 횟수·근거 공백에 따라 달라집니다. 같은 기술·관점의 추가 검색은 한 번 수행한 뒤 다시 평가하며, 진전 없는 전체 반복을 방지합니다. LLM은 조사·평가·작성·내용 Judge에 사용합니다.
+**실선은 작업 배정·종료, 점선은 결과 복귀입니다.** 세 영역은 기능을 묶어 표시한 것이며 Supervisor가 그 안의 작업자 하나를 선택합니다. 종합·보고서·품질·PDF도 각각 실행 후 Supervisor로 돌아옵니다.
+
+| 결과를 확인한 시점 | 다음 행동 |
+|---|---|
+| 아직 평가하지 않은 관점이 있음 | 해당 평가 배정 |
+| 기술·관점의 근거가 부족함 | 범위를 지정해 재조사·재평가. 같은 기술·관점의 보완 검색은 최대 1회 |
+| 기술 근거가 변경됨 | 관련 평가와 이후 보고서를 재검토. 유효한 시장성 결과는 재사용 |
+| 보고서 품질이 미달함 | 기존 근거와 품질 지적으로 보고서 재작성 |
+| 최신 품질 통과·PDF 저장 완료 | `completed`로 종료 |
+
+종합과 보고서는 근거 충분성을 확인한 뒤 진행합니다. 필수 근거가 계속 부족하거나 호출 예산을 소진하면 사유를 남기고 종료합니다.
 
 ## Directory Structure
 
 ```text
-├── data/                         # PDF 원문·로컬 인덱스·조사 결과
+├── main.py                       # 전체 실행
 ├── src/kv_cache_eval/
-│   ├── common/                   # 공유 State·스키마·설정
-│   ├── features/
-│   │   ├── supervisor/           # 라우팅·공통 실행 경계
-│   │   ├── quality/              # 보고서 품질 평가
-│   │   ├── technical_research/   # PDF RAG·웹 조사
-│   │   ├── maturity/             # TRL 평가
-│   │   ├── market/               # 시장성 평가
-│   │   ├── stakeholders/         # 이해관계자 평가
-│   │   ├── domain/               # 도메인 적합성 평가
-│   │   ├── synthesis/            # 평가 종합
-│   │   └── report/               # PDF 보고서
-│   └── graph/                    # 전체 워크플로와 근거 확인
-├── docs/                         # 공통 계약과 작업 기록
-├── scripts/                      # 조사·Supervisor 실행과 재개 명령
-├── tests/                        # 오프라인 테스트
-├── main.py                       # 전체 그래프 실행
+│   ├── common/                   # State·스키마·설정·공통 근거 처리
+│   ├── graph/                    # runner: 실행·재개 / workflow: 연결 / gates: 근거 검사
+│   └── features/
+│       ├── supervisor/           # 다음 작업 선택·상태 전이·재시도
+│       ├── technical_research/   # PDF RAG·웹 조사
+│       ├── maturity/ · market/   # 성숙도·시장성 평가
+│       ├── stakeholders/ · domain/ # 이해관계자·도메인 평가
+│       └── synthesis/ · report/ · quality/ # 종합·작성·품질 검사
+├── data/                         # 원문 PDF·인덱스·캐시·체크포인트
+├── output/pdf/                   # 최종 보고서
+├── assets/fonts/                 # PDF용 한글 폰트
+├── scripts/                      # 실행·재개·검색 평가 CLI
+├── tests/                        # 오프라인 테스트·검색 질문집
+├── docs/                         # 개발 계약·작업 기록
 └── README.md
 ```
 
+**코드 읽는 순서:** `main.py` → `graph/runner.py` → `graph/workflow.py` → `features/supervisor/node.py` → 선택된 기능의 `node.py`. 프롬프트와 세부 검증은 각 기능 폴더에 있습니다.
+
+도메인 평가는 `node.py`에서 전체 순서를 보고, 필요할 때 `evidence.py`(근거 수집), `assessment.py`(모델 호출·보정), `validation.py`(인용·측정값 검증)로 내려가면 됩니다.
+
 ## Usage
 
-Python 3.11과 `uv`가 필요합니다. `data/documents/`에 manifest에 맞는 원문 PDF 5개를 준비합니다. `.env.example`을 참고해 `.env`에 모델·API 키를 설정합니다. `.env`가 이미 있으면 보존합니다.
+Python 3.11과 uv가 필요합니다. 저장소 루트에서 실행합니다.
 
 ```bash
 uv sync --locked --all-extras
-
-# .env: LLM_PROVIDER=openai, LLM_MODEL, OPENAI_API_KEY, TAVILY_API_KEY
-# LangSmith 사용 시 LANGSMITH_TRACING=true, LANGSMITH_API_KEY, LANGSMITH_PROJECT
-.venv/bin/python main.py
-
-# 실행 ID를 지정하는 방법
-.venv/bin/python scripts/run_supervisor.py --run-id example-01
-
-# 기술 조사 뒤 의도적으로 중단하여 재개 동작 확인
-.venv/bin/python scripts/run_supervisor.py --run-id resume-01 --pause-after technical_research
-.venv/bin/python scripts/run_supervisor.py --run-id resume-01 --resume
+test -f .env || cp .env.example .env
 ```
 
-`main.py`의 `QUESTION` 또는 CLI의 `--question`으로 질문을 지정합니다. 같은 ID의 실행을 덮어쓰지 않습니다. 재개할 때는 저장된 질문과 호출 예산을 사용합니다.
+### 실행 준비
 
-- 체크포인트: `data/cache/supervisor/checkpoints.sqlite`
-- 실행별 기록: `data/cache/supervisor/<run-id>/decisions.jsonl`, `state.json`, `graph.mmd`
-- 최종 PDF: `output/pdf/kv_cache_evaluation_report.pdf` (`REPORT_PDF_PATH`로 변경 가능)
-- 기본 한글 폰트: 저장소의 `assets/fonts/NanumGothic.ttf` (`REPORT_FONT_PATH`로 변경 가능)
+1. `.env`에 `LLM_PROVIDER=openai`, `LLM_MODEL`, `OPENAI_API_KEY`, `TAVILY_API_KEY`를 설정합니다. Judge·LangSmith 설정은 선택 사항입니다.
+2. `data/documents/`에 [KIVI](src/kv_cache_eval/features/technical_research/sources/kivi.json)·[InfiniGen](src/kv_cache_eval/features/technical_research/sources/infinigen.json) 명세의 PDF 5개를 준비합니다. 파일명·SHA256·페이지 수가 일치해야 합니다.
+3. 임베딩 모델이 캐시에 없으면 처음에 다운로드합니다. 인덱스는 필요할 때 생성하며, 전체 실행은 외부 모델·검색 API를 호출합니다.
 
-체크포인트와 실행 기록에는 근거·평가 내용이 포함되며 Git에서 제외됩니다. 생성 도중 중단된 외부 요청은 재개 시 다시 호출될 수 있습니다. 동일 실행의 PDF는 임시 파일 교체로 저장합니다.
+설정 예시는 다음과 같습니다. 키는 본인의 값으로 입력하고 Git에 올리지 않습니다.
 
-### `.env`를 바꿔도 인증 오류가 남는 경우
+```dotenv
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.4-mini
+OPENAI_API_KEY=발급받은_OpenAI_키
+TAVILY_API_KEY=발급받은_Tavily_키
+LANGSMITH_TRACING=false
+```
 
-이 프로젝트는 이미 설정된 프로세스 환경변수를 `.env`보다 우선한다. 실행 환경의 키가 오래된 값이면 `.env` 수정만으로 적용되지 않는다. 로컬 파일의 OpenAI 키를 사용하려면 해당 실행에서만 기존 값을 제외한다.
+### 실행과 재개
 
 ```bash
-env -u OPENAI_API_KEY .venv/bin/python scripts/run_supervisor.py --run-id new-run-01
+# main.py의 QUESTION으로 실행
+.venv/bin/python main.py
+
+# 실행 ID 지정 / 중단된 실행 재개
+.venv/bin/python scripts/run_supervisor.py --run-id comparison-01
+.venv/bin/python scripts/run_supervisor.py --run-id comparison-01 --resume
 ```
 
-API 키 원문을 로그나 커밋에 남기지 않는다. LangSmith의 추적 업로드 오류와 OpenAI 모델 호출 오류는 별도로 확인한다.
+질문은 `main.py`의 `QUESTION` 또는 CLI `--question`으로 지정합니다. 새 실행에는 새 ID를 사용하고, 재개 시에는 저장된 질문과 예산을 사용합니다. 설정은 셸 환경변수가 `.env`보다 우선합니다.
+
+### 결과 확인
+
+- **PDF:** `output/pdf/kv_cache_evaluation_report.pdf` — 여러 결과를 보관하려면 `REPORT_PDF_PATH`로 경로 지정.
+- **체크포인트:** `data/cache/supervisor/checkpoints.sqlite`.
+- **실행 기록:** `data/cache/supervisor/<run-id>/`의 `state.json`, `decisions.jsonl`, `graph.mmd`.
+- **상세 준비 방법:** [기술 조사 안내](src/kv_cache_eval/features/technical_research/README.md). 원문·인덱스·캐시·PDF는 Git에 포함되지 않습니다.
 
 ## Verification
 
 ```bash
-# .env가 있어도 외부 통신을 차단하는 오프라인 검증
 PYTHONPATH=tests/offline_guard:src HF_HUB_OFFLINE=1 LANGSMITH_TRACING=false \
   .venv/bin/python -m unittest discover -s tests -v
 ```
 
-오프라인 테스트는 선택적 재작업, 오류·종료, 품질 미달 후 수정, 실제 PDF 렌더링, SQLite 재개를 검증합니다. 대역 응답으로 통과한 테스트는 실제 모델의 보고서 품질이나 실제 서비스 운영 증거를 의미하지 않습니다. 실행 결과와 남은 제한은 [작업 기록](docs/main-ver2-worklog.md)에 구분해 기록합니다.
+2026-10-07 기록 기준 **오프라인 테스트 111개 통과**. 재조사·부분 병합·오류·보고서 수정 상한·인용·PDF 출력·체크포인트 재개를 검증했습니다. 실제 모델의 품질을 보장하는 결과는 아닙니다.
 
-개발 계약은 [공통 개발 계약](docs/supervisor-common-contract.md)을 참고하세요.
+실제 5쪽 PDF 완료 기록은 보고서 재시도 상한 변경 전 정책의 결과입니다. 현재 정책과 실제 실행의 검증 범위는 [작업 기록](docs/main-ver2-worklog.md), 개발 규칙은 [공통 계약](docs/supervisor-common-contract.md)을 참고하세요.
 
 ## Contributors
 
-아래는 기존 기능 구현의 기여 기록입니다.
+기존 기능 구현의 기여 기록입니다.
 
-- **배민혁** : InfiniGen 기술 조사 RAG·웹 검색, 공통 조사 흐름 및 전체 그래프 통합
-- **조수연** : KIVI RAG·근거 추출, 기술 성숙도(TRL) 평가
-- **정태호** : 시장성 웹 조사, 평가 기준 및 시장성 평가 노드
-- **김예진** : 이해관계자 평가 노드
-- **안민아** : 도메인 적합성 평가와 수치 근거 검증
-- **김지환** : 관점별 결과 종합 및 PDF 보고서 생성
+| 이름 | 기여 |
+|---|---|
+| 배민혁 | InfiniGen RAG·웹 조사, 공통 조사 흐름·전체 그래프 통합 |
+| 조수연 | KIVI RAG·근거 추출, TRL 평가 |
+| 정태호 | 시장성 조사·평가 기준·평가 노드 |
+| 김예진 | 이해관계자 평가 |
+| 안민아 | 도메인 적합성 평가·수치 근거 검증 |
+| 김지환 | 관점별 결과 종합·PDF 보고서 생성 |
