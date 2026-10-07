@@ -26,6 +26,7 @@ def _cover_metadata():
 def _draw_cover(canvas, document, font_name, metadata):
     """A separate A4 title page; body headings and evidence stay unchanged."""
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.platypus import Paragraph
@@ -36,7 +37,18 @@ def _draw_cover(canvas, document, font_name, metadata):
     ink = colors.HexColor("#172333")
     muted = colors.HexColor("#5B6674")
 
-    def paragraph(text, top, size, leading, color=ink, max_height=40 * mm):
+    def paragraph(
+        text,
+        top,
+        size,
+        leading,
+        color=ink,
+        max_height=40 * mm,
+        alignment=TA_CENTER,
+        block_width=None,
+        bottom=None,
+    ):
+        block_width = block_width or available
         style = ParagraphStyle(
             "Cover",
             fontName=font_name,
@@ -44,42 +56,42 @@ def _draw_cover(canvas, document, font_name, metadata):
             leading=leading,
             textColor=color,
             wordWrap="CJK",
+            alignment=alignment,
         )
         item = Paragraph(_paragraph_text(text), style)
-        _, item_height = item.wrap(available, max_height)
+        _, item_height = item.wrap(block_width, max_height)
         if item_height > max_height:
             raise ValueError(
                 "표지 정보가 지정된 공간을 초과합니다. 작성자·소속을 줄이세요."
             )
-        item.drawOn(canvas, left, top - item_height)
+        block_left = width - left - block_width if alignment == TA_RIGHT else left
+        item.drawOn(
+            canvas, block_left, bottom if bottom is not None else top - item_height
+        )
 
     canvas.saveState()
     try:
-        paragraph("TECHNICAL ASSESSMENT", height - 30 * mm, 10, 15, muted)
-        canvas.setStrokeColor(ink)
-        canvas.setLineWidth(0.8)
-        canvas.line(left, height - 43 * mm, width - left, height - 43 * mm)
-        paragraph("KV Cache 최적화 기술\n다관점 평가 보고서", height - 70 * mm, 25, 38)
-        paragraph("KIVI와 InfiniGen 비교", height - 105 * mm, 15, 23, muted)
+        paragraph("KV Cache 최적화 기술\n다관점 평가 보고서", height - 85 * mm, 25, 38)
+        paragraph("KIVI와 InfiniGen 비교", height - 125 * mm, 15, 23, muted)
         paragraph(
-            "GPU 기반 클라우드 LLM 서비스 적용 평가", height - 123 * mm, 11, 18, muted
+            "GPU 기반 클라우드 LLM 서비스 적용 평가", height - 144 * mm, 10, 17, muted
         )
-        paragraph(
-            "기술 성숙도 / 시장성 / 이해관계자 / 도메인 적용성",
-            height - 137 * mm,
-            9,
-            15,
-            muted,
-        )
+        details = []
         if metadata["authors"]:
-            paragraph("작성자", 112 * mm, 9, 14, muted)
-            paragraph(metadata["authors"], 102 * mm, 11, 18, max_height=35 * mm)
+            details.append("작성자  " + metadata["authors"])
         if metadata["affiliation"]:
-            paragraph(
-                metadata["affiliation"], 62 * mm, 10, 16, muted, max_height=20 * mm
-            )
+            details.append(metadata["affiliation"])
+        details.append("작성일  " + metadata["date"])
         paragraph(
-            "작성일  " + metadata["date"], 37 * mm, 10, 16, muted, max_height=15 * mm
+            "\n".join(details),
+            0,
+            10,
+            20,
+            muted,
+            max_height=45 * mm,
+            alignment=TA_RIGHT,
+            block_width=115 * mm,
+            bottom=29 * mm,
         )
         canvas.setStrokeColor(colors.HexColor("#D5DCE3"))
         canvas.setLineWidth(0.5)
