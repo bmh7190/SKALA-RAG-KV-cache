@@ -56,7 +56,8 @@ REPORT_PROMPT = """당신은 KIVI와 InfiniGen의 GPU 클라우드 LLM 서비스
 5장은 상충 관계와 조건별 적용 가능성을 설명한다. 6장은 남은 공백과 확인 방법을 구체적으로 적는다.
 공개 근거가 없으면 무엇을 확인했으며 무엇이 남았는지 설명하되 사실을 만들어 분량을 채우지 않는다.
 수정 요청과 이전 품질 지적이 있으면 해결하고 올바른 기존 내용을 보존한다.
-REFERENCE 본문은 비워 둔다. 코드는 실제 본문 인용만으로 참고문헌을 만든다.
+REFERENCE는 코드가 실제 본문 인용만으로 생성하므로 sections에서 생략해도 된다.
+gaps·domain·quality_feedback 같은 입력 필드명은 근거 ID가 아니므로 인용하지 않는다.
 보고서 전체를 반환한다. 한국어로 쓰고 Markdown 표 대신 읽기 쉬운 문단과 목록을 사용한다."""
 
 
@@ -78,6 +79,10 @@ def write_report(state, *, chain=None):
         chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
     )
     titles = [section.title for section in result.sections]
+    # References are generated from validated inline citations, not model prose.
+    if titles == list(REPORT_SECTION_TITLES[:-1]):
+        result.sections.append(Section(title="REFERENCE", content=""))
+        titles.append("REFERENCE")
     if titles != list(REPORT_SECTION_TITLES):
         raise ValueError("보고서 목차가 누락·중복되었거나 순서가 다릅니다")
     sections = [(section.title, section.content.strip()) for section in result.sections]

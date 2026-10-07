@@ -103,6 +103,29 @@ class ReportQualityTests(unittest.TestCase):
             result = write_report(s, chain=RunnableLambda(lambda _: raw))
         self.assertEqual(result["report"]["cited_evidence_ids"], ["kivi:a"])
 
+    def test_code_generated_reference_section_may_be_omitted_by_model(self):
+        s = ready_state()
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"][:-1]
+            ],
+            "cited_evidence_ids": ["kivi:a"],
+        }
+        result = write_report(s, chain=RunnableLambda(lambda _: raw))
+        self.assertEqual(result["report"]["sections"][-1], ("REFERENCE", ""))
+        self.assertEqual(result["report"]["cited_evidence_ids"], ["kivi:a"])
+
+    def test_missing_body_section_still_rejected(self):
+        s = ready_state()
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"][1:]
+            ],
+            "cited_evidence_ids": ["kivi:a"],
+        }
+        with self.assertRaisesRegex(ValueError, "목차"):
+            write_report(s, chain=RunnableLambda(lambda _: raw))
+
     def test_old_quality_verdict_cannot_export(self):
         s = ready_state()
         s.update(evaluate(s, chain=judge()))
