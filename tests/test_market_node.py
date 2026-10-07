@@ -34,7 +34,7 @@ class MarketNodeTest(unittest.TestCase):
         self.assertEqual(len(update["market_eval"]["evaluations"]), 6)
         self.assertTrue(update["market_evidence"]["evidence"])
 
-        state = new_state(max_research_rounds=0)
+        state = new_state()
         state.update(update)
         gaps = check_evidence(state)["evidence_gaps"]
         market_gaps = [gap for gap in gaps if gap["criterion"] == "시장성"]

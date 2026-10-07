@@ -1,6 +1,7 @@
 """근거, 평가, 종합 결과를 연결하는 최소 자료형."""
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal
+from typing_extensions import NotRequired, TypedDict
 
 
 Technology = Literal["KIVI", "InfiniGen"]
@@ -96,6 +97,7 @@ class AgentExecution(TypedDict):
     status: Literal['completed', 'needs_evidence', 'failed']
     gaps: list[EvidenceGap]
     error: AgentError | None
+    changed_keys: NotRequired[list[str]]
 
 
 QualityCriterion = Literal['groundedness', 'neutrality', 'bias_control', 'perspective_coverage']

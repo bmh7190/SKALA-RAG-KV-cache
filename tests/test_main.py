@@ -32,15 +32,6 @@ class MainTest(unittest.TestCase):
             self.assertIs(app.main(), final)
         execute.assert_called_once_with(app.QUESTION)
 
-    def test_run_builds_and_invokes_full_graph(self):
-        graph = Mock()
-        final = {"report": "graph result"}
-        graph.invoke.return_value = final
-        with patch.object(graph_workflow, "build_graph", return_value=graph) as build:
-            self.assertIs(graph_workflow.run("공통 질문"), final)
-        build.assert_called_once_with(user_question="공통 질문")
-        graph.invoke.assert_called_once_with(new_state())
-
     def test_question_reaches_research_workflow(self):
         with patch("kv_cache_eval.features.technical_research.node.make_runtime_llm", return_value=object()), \
              patch("kv_cache_eval.features.technical_research.workflow.research_questions",

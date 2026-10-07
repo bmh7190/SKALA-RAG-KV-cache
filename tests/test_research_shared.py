@@ -48,7 +48,6 @@ class SharedResearchTest(unittest.TestCase):
         state = new_state()
         prior = {"evidence": [], "notes": ["earlier round"]}
         state["kivi_evidence"] = prior
-        state["research_round"] = 1
         with patch.object(node, "make_runtime_llm", return_value=object()), \
              patch("kv_cache_eval.features.technical_research.workflow.research_questions",
                    return_value={"evidence": [], "notes": []}) as workflow:
@@ -93,7 +92,6 @@ class SharedResearchTest(unittest.TestCase):
         from kv_cache_eval.features.maturity.node import evaluate
 
         state = new_state()
-        state["research_round"] = 1
         state["evidence_gaps"] = [{"technology": "KIVI", "criterion": "기술 성숙도",
                                    "reason": "핵심 원리 근거가 부족"}]
         gap = questions_for_state(state, "KIVI")[0]

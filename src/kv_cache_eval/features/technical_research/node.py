@@ -47,7 +47,7 @@ def research_technology(
                                 prior=state[key], web_search=web_search)
     result["notes"].append(
         f"{technology} 조사: 질문 {len(questions)}개, LLM 호출 {reviewer.calls}/{max_llm_calls}, "
-        f"외부 재조사 라운드 {state['research_round']}"
+        f"Supervisor 단계 {state.get('step_count', 0)}"
     )
     return result
 
