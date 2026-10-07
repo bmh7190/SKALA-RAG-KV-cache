@@ -102,6 +102,39 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(self.events.count("technical_research"), 1)
         self.assertEqual(self.events.count("report"), 2)
 
+    def test_report_format_and_quality_share_single_retry(self):
+        report = self.nodes["report"]
+        quality = self.nodes["quality"]
+        attempts = []
+
+        def first_invalid(s):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise ValueError("invalid citation")
+            return report(s)
+
+        def reject(s):
+            update = quality(s)
+            q = update["quality_result"]
+            q.update(passed=False)
+            q["checks"]["groundedness"] = "fail"
+            q["issues"] = [
+                {
+                    "criterion": "groundedness",
+                    "section": "SUMMARY",
+                    "reason": "claim unsupported",
+                    "required_action": "rewrite",
+                }
+            ]
+            return update
+
+        self.nodes.update(report=first_invalid, quality=reject)
+        s = self.invoke()
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(s["report_revision"], 1)
+        self.assertEqual(s["status"], "incomplete")
+        self.assertNotIn("export_pdf", self.events)
+
     def test_failed_generation_never_exports_previous_pass(self):
         def broken(s):
             raise ValueError("bad citation")

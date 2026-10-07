@@ -88,13 +88,13 @@ State에서는 작업 데이터와 제어 정보를 주석으로 구분한다. �
 | `agent_calls` | `dict[AgentName, int]` | `{}` | A가 노드별 호출 횟수 관리 |
 | `max_agent_calls` | `int` | `6` | 초기 노드별 호출 상한 |
 | `report_revision` | `int` | `0` | 최초 초안은 0, 이후 보고서 재생성 배정 시 A가 1 증가 |
-| `max_report_revisions` | `int` | `2` | 최초 초안 이후 추가 생성 상한 |
+| `max_report_revisions` | `int` | `1` | 최초 초안 이후 재시도 상한. 총 작성 최대 2회 |
 | `status` | `RunStatus` | `"running"` | A가 전체 실행 상태 관리 |
 | `last_error` | `AgentError \| None` | `None` | A가 `last_result`에서 반영. 다음 작업 성공 시 해제 |
 | `termination_reason` | `str \| None` | `None` | A가 완료·미완료·실패 사유 기록 |
 | `trace_id` | `str` | 실행별 UUID | 초기화 후 불변. 체크포인트·외부 로그와 연결 |
 
-30·6·2는 기본 설정값이다. 세 값은 설정으로 변경할 수 있으며 실제 성공 횟수를 보장하는 값이 아니다. 기존 `research_round`, `max_research_rounds`는 삭제했고 Supervisor 호출 예산으로 통일했다. 같은 기술·관점의 추가 검색은 한 번 수행한 뒤 재평가한다.
+30·6·1은 기본 설정값이다. 세 값은 설정으로 변경할 수 있으며 실제 성공 횟수를 보장하는 값이 아니다. 기존 `research_round`, `max_research_rounds`는 삭제했고 Supervisor 호출 예산으로 통일했다. 같은 기술·관점의 추가 검색은 한 번 수행한 뒤 재평가한다.
 
 추가 제어 필드로 `question`(원래 질문), `pending_work`(노드별 재검토 요청), `gap_attempts`(기술·관점별 추가 검색 횟수), `decision_reason`(최신 라우팅 사유)을 유지한다. `AgentExecution.changed_keys`는 실제 바뀐 결과 키 목록이며 진단 notes만 바뀐 것은 근거 변경으로 계산하지 않는다.
 
@@ -350,3 +350,5 @@ A는 지속 가능한 체크포인트 저장과 같은 실행 ID를 사용한 �
 보정 요청은 한 번에 한 항목만 받는 동적 구조화 출력 스키마를 사용한다. 기술·항목·허용 근거 ID를 제한하고, measurement·score는 null로 고정한다. 모델은 인용문을 다시 쓰는 대신 원문 필드(claim 또는 excerpt)를 선택한다. 코드는 선택된 원문을 그대로 연결하고 기존 검토자가 판단의 지지 여부를 확인한다. 통과한 초기 정량 평가는 보정 대상에 포함하지 않는다.
 
 정상적인 검토 응답에서 `supported=false`는 해당 판단을 폐기하고 `evidence_gap`으로 반환한다. 인용문 일치만으로 판단의 타당성을 통과시키지 않는다. 검토 결과 누락·중복·타입 오류는 `response_error`로 보정한다.
+
+보고서의 재시도 예산은 형식·인용 오류, 모델 호출 실패, 품질 미달, PDF 분량 초과에 의한 추가 작성을 모두 합산한다. 기본값 1에서는 초안 이후 한 번만 더 작성한다. 실패 종류가 바뀌어도 예산을 초기화하지 않는다. 기존 체크포인트는 당시 저장된 예산을 유지하므로 과거 실행 기록과 새 기본값을 구분한다.

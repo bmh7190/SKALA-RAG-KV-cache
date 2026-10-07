@@ -67,7 +67,7 @@ InfiniGen은 새로운 하드웨어 자체보다 CPU·GPU 메모리 계층을 �
 | 상관 | `trace_id`를 checkpoint의 `thread_id`와 LangSmith metadata에 연결 |
 | 재개·복구 | SQLite checkpoint, `invoke(None)`으로 재개. 완료된 조사 재실행 방지 |
 | 동시 처리 | 하위 노드 하나씩 실행. 중복 쓰기가 없어 누적 reducer 불필요 |
-| 종료 보장 | 전체 30회, 노드별 6회, 보고서 추가 생성 2회가 기본 상한 |
+| 종료 보장 | 전체 30회, 노드별 6회, 보고서 재시도 1회(초안 포함 총 2회)가 기본 상한 |
 
 `completed`는 최신 보고서의 품질 통과와 PDF 저장 확인을 뜻합니다. 근거·품질 미달은 `incomplete`, 복구 불가 오류는 `failed`로 종료합니다. 일부 미확인 항목은 한계로 남길 수 있지만 관점 전체의 근거가 없는 경우에는 보고서로 넘어가지 않습니다. `completed_agents`는 검토한 결과의 유효성을 표시하며 충분성 판단은 `evidence_decision`으로 별도 확인합니다.
 

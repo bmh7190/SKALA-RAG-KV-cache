@@ -88,7 +88,7 @@ def new_state(
     trace_id: str | None = None,
     max_steps: int = 30,
     max_agent_calls: int = 6,
-    max_report_revisions: int = 2,
+    max_report_revisions: int = 1,
 ) -> State:
     """완전한 초기 상태를 만든다. 부분 업데이트와 제어 필드 정의를 공유한다."""
     if max_steps < 1 or max_agent_calls < 1 or max_report_revisions < 0:
