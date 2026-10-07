@@ -6,12 +6,15 @@ from typing import Literal
 from pydantic import BaseModel
 
 from kv_cache_eval.common.evidence import (
-    collect_evidence,
     require_values,
     validate_citations,
 )
 from kv_cache_eval.common.llm import structured_chain
-from kv_cache_eval.common.tasks import EVALUATION_KEYS
+from kv_cache_eval.features.report.factual_checks import (
+    FACTUAL_RULES,
+    collect_report_evidence,
+    factual_issues,
+)
 from kv_cache_eval.features.report.node import REPORT_SECTION_TITLES
 
 CRITERIA = ("groundedness", "neutrality", "bias_control", "perspective_coverage")
@@ -45,7 +48,7 @@ pass 항목도 실제로 검토한 이유를 적고, fail/unknown 항목은 해�
 
 def evaluate(state, *, chain=None):
     report = require_values(state, "report")["report"]
-    evidence = collect_evidence(state)
+    evidence = collect_report_evidence(state)
     structural = {}
     sections = report["sections"]
     if [title for title, _ in sections] != list(REPORT_SECTION_TITLES) or any(
@@ -74,6 +77,13 @@ def evaluate(state, *, chain=None):
             str(error),
             "유효한 근거 ID와 주장 연결을 확인한다",
         )
+    findings = factual_issues(report)
+    if findings:
+        structural["groundedness"] = (
+            ", ".join(dict.fromkeys(title for title, _, _ in findings)),
+            "; ".join(dict.fromkeys(reason for _, reason, _ in findings)),
+            "; ".join(dict.fromkeys(action for _, _, action in findings)),
+        )
     checks, reasons, issues = {}, {}, []
     if structural:
         # No need to spend a judge call on a structurally invalid draft.
@@ -90,11 +100,9 @@ def evaluate(state, *, chain=None):
         payload = {
             "report": report,
             "evidence": evidence,
-            "evaluations": {key: state.get(key) for key in EVALUATION_KEYS.values()},
-            "gaps": state.get("evidence_gaps"),
         }
         chain = chain or structured_chain(
-            Judgment, PROMPT, role="judge", name="report_quality"
+            Judgment, PROMPT + "\n" + FACTUAL_RULES, role="judge", name="report_quality"
         )
         judgments = Judgment.model_validate(
             chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
