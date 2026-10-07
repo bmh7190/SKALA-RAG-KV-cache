@@ -65,6 +65,49 @@ def judge(coverage="pass"):
 
 
 class ReportQualityTests(unittest.TestCase):
+    def test_report_subheading_is_rejected_by_output_schema(self):
+        s = ready_state()
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"]
+            ],
+            "cited_evidence_ids": ["kivi:a"],
+        }
+        raw["sections"].insert(5, {"title": "4.4 도메인 적용성", "content": "내용"})
+        with self.assertRaisesRegex(ValueError, "4장 content"):
+            write_report(s, chain=RunnableLambda(lambda _: raw))
+
+    def test_invalid_citation_feedback_reaches_retry_request(self):
+        from kv_cache_eval.features.supervisor.execution import classify_error
+        from kv_cache_eval.features.supervisor.retries import failed_work
+
+        s = ready_state()
+        s.update(step_count=1, agent_calls={"report": 1})
+        raw = {
+            "sections": [
+                {"title": t, "content": c} for t, c in s["report"]["sections"]
+            ],
+            "cited_evidence_ids": ["kivi:a", "market-infinigen-missing"],
+        }
+        raw["sections"][0]["content"] += " [gaps]"
+        try:
+            write_report(s, chain=RunnableLambda(lambda _: raw))
+        except ValueError as error:
+            result = {"agent": "report", "error": classify_error(error)}
+        else:
+            self.fail("unknown citations must fail")
+        update = failed_work(s, result)
+        reason = update["retry_request"]["reason"]
+        self.assertIn("gaps", reason)
+        self.assertIn("market-infinigen-missing", reason)
+        self.assertIn("allowed_evidence_ids", reason)
+
+    def test_provider_value_error_does_not_expose_credentials(self):
+        from kv_cache_eval.features.supervisor.execution import classify_error
+
+        error = classify_error(ValueError("request contains secret credential"))
+        self.assertNotIn("secret credential", error["message"])
+
     def test_pass_and_revision_bound_to_current_draft(self):
         s = ready_state()
         s["report_revision"] = 2

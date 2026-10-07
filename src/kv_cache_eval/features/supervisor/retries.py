@@ -35,14 +35,19 @@ def failed_work(state, result):
         "synthesis",
         "quality",
     ):
+        reason = (
+            "출력 형식·인용 검증 실패. "
+            + error["message"]
+            + " 허용된 스키마와 근거 ID로 재작성한다."
+        )
         return dispatch(
             state,
             agent,
-            "출력 형식·인용 검증 실패. 허용된 스키마와 근거 ID로 재작성한다.",
+            reason,
             {
                 "technology": None,
                 "criteria": [],
-                "reason": "출력 형식·인용 검증 실패. 허용된 스키마와 근거 ID로 재작성한다.",
+                "reason": reason,
             },
         )
     return finish(state, "failed", f"{agent}: {error['message']}")

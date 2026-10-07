@@ -4,8 +4,9 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from kv_cache_eval.common.evidence import (
     CITATION,
@@ -29,8 +30,21 @@ REPORT_SECTION_TITLES = (
 )
 
 
+class ReportValidationError(ValueError):
+    """Safe, locally constructed feedback; never contains provider request bodies."""
+
+
 class Section(BaseModel):
-    title: str
+    title: Literal[
+        "SUMMARY",
+        "1. 분석 배경",
+        "2. 기술 선정 및 개요",
+        "3. 평가 기준 및 방법",
+        "4. 관점별 평가 결과",
+        "5. 종합 평가 및 시사점",
+        "6. 한계점",
+        "REFERENCE",
+    ]
     content: str
 
 
@@ -52,6 +66,7 @@ REPORT_PROMPT = """당신은 KIVI와 InfiniGen의 GPU 클라우드 LLM 서비스
 2장은 두 기술의 선정 이유·원리·구현·제약을 각각 설명한다.
 3장은 평가 기준과 근거 상태, 비교 가능한 조건을 설명한다.
 4장에는 4.1 기술 성숙도, 4.2 시장성, 4.3 이해관계자, 4.4 도메인 적용성을 소제목으로 둔다.
+4.1~4.4는 반드시 4장의 content 안에 작성한다. 별도 sections 항목으로 만들지 않는다.
 각 관점에서 두 기술을 모두 분석하며, 이해관계자별 편익·부담과 도메인 6개 항목의 판단을 보존한다.
 5장은 상충 관계와 조건별 적용 가능성을 설명한다. 6장은 남은 공백과 확인 방법을 구체적으로 적는다.
 공개 근거가 없으면 무엇을 확인했으며 무엇이 남았는지 설명하되 사실을 만들어 분량을 채우지 않는다.
@@ -73,19 +88,56 @@ def write_report(state, *, chain=None):
         "revision_request": state.get("retry_request"),
         "quality_feedback": state.get("quality_result"),
         "gaps": state.get("evidence_gaps"),
+        "allowed_evidence_ids": list(evidence),
     }
     chain = chain or structured_chain(ReportOutput, REPORT_PROMPT, name="report_draft")
-    result = ReportOutput.model_validate(
-        chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
-    )
+    try:
+        result = ReportOutput.model_validate(
+            chain.invoke({"payload": json.dumps(payload, ensure_ascii=False)})
+        )
+    except ValidationError as error:
+        raise ReportValidationError(
+            "보고서 스키마·목차 오류: sections에는 지정된 대목차만 넣고 "
+            "4.1~4.4 소제목은 4장 content 안에 작성하세요. "
+            "각 장에는 title과 content, 전체 결과에는 cited_evidence_ids가 필요합니다."
+        ) from error
     titles = [section.title for section in result.sections]
     # References are generated from validated inline citations, not model prose.
     if titles == list(REPORT_SECTION_TITLES[:-1]):
         result.sections.append(Section(title="REFERENCE", content=""))
         titles.append("REFERENCE")
     if titles != list(REPORT_SECTION_TITLES):
-        raise ValueError("보고서 목차가 누락·중복되었거나 순서가 다릅니다")
+        raise ReportValidationError(
+            "보고서 목차가 누락·중복되었거나 순서가 다릅니다. sections는 "
+            + " / ".join(REPORT_SECTION_TITLES)
+            + " 순서로 작성하고 4.1~4.4 소제목은 4장 content에 넣으세요."
+        )
     sections = [(section.title, section.content.strip()) for section in result.sections]
+    inline_ids = {
+        value.strip()
+        for title, text in sections
+        if title != "REFERENCE"
+        for value in CITATION.findall(text)
+    }
+    unknown = (inline_ids | set(result.cited_evidence_ids)) - evidence.keys()
+    if unknown:
+        # Expose only bounded citation-shaped identifiers, never arbitrary model text.
+        import re
+
+        safe_ids = [
+            value
+            if re.fullmatch(
+                r"(?:kivi|infinigen|market)[-:][A-Za-z0-9_:.-]{1,120}|gaps", value
+            )
+            else "허용되지 않은 ID"
+            for value in sorted(unknown)[:10]
+        ]
+        raise ReportValidationError(
+            "확인되지 않은 근거 ID: "
+            + ", ".join(safe_ids)
+            + ". 본문과 cited_evidence_ids 모두 allowed_evidence_ids에 있는 ID만 "
+            "사용하세요. gaps는 출처가 아닙니다. 근거 없는 주장은 삭제하거나 미확인으로 표시하세요."
+        )
     cited = validate_citations(
         [text for title, text in sections if title != "REFERENCE"],
         evidence,
