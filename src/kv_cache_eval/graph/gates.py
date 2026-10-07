@@ -48,21 +48,27 @@ def assessment_gaps(state, agent, *, scoped=False):
     ]
 
 
-def check_evidence(state):
-    evidence = collect_evidence(state)
-    gaps, blocking = [], []
-    for technology in state["selected_technologies"]:
+def research_gaps(state, evidence=None):
+    """시장 근거를 제외한 기술 원문 근거가 한 건도 없는 기술의 공백."""
+    evidence = collect_evidence(state) if evidence is None else evidence
+    return [
+        {
+            "technology": technology,
+            "criterion": "기술 조사",
+            "reason": "확인된 기술 원문 근거가 없음",
+        }
+        for technology in state["selected_technologies"]
         if not any(
             item["technology"] == technology and not eid.startswith("market-")
             for eid, item in evidence.items()
-        ):
-            gap = {
-                "technology": technology,
-                "criterion": "기술 조사",
-                "reason": "확인된 기술 원문 근거가 없음",
-            }
-            gaps.append(gap)
-            blocking.append(gap)
+        )
+    ]
+
+
+def check_evidence(state):
+    evidence = collect_evidence(state)
+    gaps = research_gaps(state, evidence)
+    blocking = list(gaps)
     for agent, key in EVALUATION_KEYS.items():
         current = assessment_gaps(state, agent)
         gaps.extend(current)

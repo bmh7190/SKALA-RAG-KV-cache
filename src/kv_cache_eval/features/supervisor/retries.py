@@ -77,6 +77,10 @@ def retry_gap(state, gaps):
                 "experiment_conditions",
                 "performance_results",
             ]
+        elif owner == "technical_research":
+            # 평가 관점에 속하지 않는 공백은 원문 근거가 0건인 '기술 조사' 공백이다.
+            # 한 범주로 좁히면 나머지 질문이 다시 조사되지 않으므로 전체 질문을 요청한다.
+            selected = []
         else:
             selected = list(
                 dict.fromkeys(
