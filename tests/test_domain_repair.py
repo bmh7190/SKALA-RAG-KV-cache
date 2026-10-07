@@ -61,6 +61,52 @@ def reviews(payload, **flags):
 
 
 class DomainRepairTests(unittest.TestCase):
+    def test_input_budget_is_enforced_before_calling_model(self):
+        for supervised in (True, False):
+            with self.subTest(supervised=supervised):
+                current = state("처리량")
+                if not supervised:
+                    current["next_agent"] = None
+                before = deepcopy(current)
+                with patch(
+                    "kv_cache_eval.features.domain.assessment.invoke_structured"
+                ) as llm:
+                    if supervised:
+                        result = worker(
+                            "domain", lambda s: evaluate(s, max_input_bytes=1)
+                        )(current, {})
+                        self.assertEqual(
+                            result["last_result"]["error"]["code"],
+                            "input_budget_exceeded",
+                        )
+                    else:
+                        result = evaluate(current, max_input_bytes=1)
+                        self.assertTrue(
+                            all(
+                                row["basis_status"] == "unverified"
+                                for row in result["domain_eval"]["evaluations"]
+                            )
+                        )
+                    llm.assert_not_called()
+                self.assertEqual(current, before)
+
+    def test_conflicting_evidence_is_excluded_without_mutating_input(self):
+        current = state("처리량")
+        current["retry_request"] = None
+        original = current["kivi_evidence"]["evidence"][0]
+        current["kivi_evidence"]["evidence"].append(
+            {**original, "claim": "상충하는 주장"}
+        )
+        before = deepcopy(current)
+        with patch("kv_cache_eval.features.domain.assessment.invoke_structured") as llm:
+            result = evaluate(current)
+        llm.assert_not_called()
+        self.assertEqual(current, before)
+        self.assertEqual(result["domain_evidence"]["evidence"], [])
+        self.assertEqual(
+            result["domain_eval"]["evaluations"][0]["basis_status"], "unverified"
+        )
+
     def test_changed_quote_repairs_only_failed_pair_with_identical_evidence(self):
         s = state("처리량", "모델 품질")
         calls = []
@@ -87,7 +133,7 @@ class DomainRepairTests(unittest.TestCase):
             return {"evaluations": [draft()], "notes": []}
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=structured_fake(invoke),
         ) as llm:
             result = evaluate(s)["domain_eval"]
@@ -121,7 +167,7 @@ class DomainRepairTests(unittest.TestCase):
             return {"evaluations": [item], "notes": []}
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=structured_fake(invoke),
         ):
             row = evaluate(s)["domain_eval"]["evaluations"][0]
@@ -140,7 +186,7 @@ class DomainRepairTests(unittest.TestCase):
             "uncertainty": "처리량 직접 측정 없음",
         }
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             return_value={"evaluations": [item], "notes": []},
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})
@@ -153,7 +199,7 @@ class DomainRepairTests(unittest.TestCase):
     def test_exhausted_bad_quote_is_execution_failure_not_research_request(self):
         response = {"evaluations": [draft(quote="invented quote")], "notes": []}
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=lambda *_: deepcopy(response),
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})
@@ -166,7 +212,7 @@ class DomainRepairTests(unittest.TestCase):
 
     def test_timeout_is_not_retried_as_response_repair(self):
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=TimeoutError("temporary"),
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})
@@ -183,7 +229,7 @@ class DomainRepairTests(unittest.TestCase):
             return reviews(json.loads(messages[1][1]))
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=structured_fake(invoke),
         ) as llm:
             row = evaluate(state("모델 품질"))["domain_eval"]["evaluations"][0]
@@ -211,7 +257,7 @@ class DomainRepairTests(unittest.TestCase):
             return reviews(json.loads(messages[1][1]), supported=False)
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=structured_fake(invoke),
         ) as llm:
             result = worker("domain", evaluate)(state("처리량"), {})

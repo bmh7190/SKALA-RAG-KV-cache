@@ -2,6 +2,22 @@
 
 GPU 기반 클라우드 LLM 서비스에 KIVI와 InfiniGen을 적용할 때의 메모리, 전송량, 지연시간, 처리량, 모델 품질, 운영 난이도를 평가합니다. 평가 기준과 점수 구간은 `rubric.py`가 정의합니다.
 
+## 코드 구조와 읽는 순서
+
+`node.py`의 `evaluate()`부터 읽습니다. 해당 함수는 평가할 범위의 결과를 얻고, 부분 재평가라면 이전 결과와 병합합니다. `_evaluate_scope()`에서 근거 준비 → 요청별 평가 → 미복구 오류 확인 → State 갱신값 조립 순서를 확인할 수 있습니다.
+
+| 파일 | 책임 |
+|---|---|
+| `node.py` | State 입력과 평가 단계 연결, 부분 결과 병합 |
+| `evidence.py` | 근거 출처·형식·중복 검사, `CollectedEvidence`로 수집 결과 반환 |
+| `assessment.py` | 입력 예산에 맞춘 요청 구성, 모델 초안·검토·항목별 한 번 보정 |
+| `validation.py` | 초안 인용·측정값 검증, 검토 결과에 따른 판단 확정 |
+| `results.py` | 미확인 평가와 최종 `domain_eval`·`domain_evidence` 조립 |
+| `measurement.py`, `rubric.py` | 수치 계산·측정값 조건과 점수 기준 |
+| `prompt.py`, `runtime.py` | 모델 출력 계약과 설정·실제 호출 |
+
+`assessment.py`는 평가 행과 진단 목록을 갱신합니다. `evidence.py`는 입력 근거를 복사해 검사하고, 노드가 받은 State 자체는 변경하지 않습니다. 외부 호출은 `runtime.invoke_structured()`를 통합니다. 검증 테스트는 호출을 사용하는 `assessment.invoke_structured`를 대체합니다.
+
 ## State 연결
 
 `node.evaluate(state)`는 `domain_and_criteria["domain"]`, `kivi_evidence`, `infinigen_evidence`를 읽고 `domain_evidence`와 `domain_eval`만 반환합니다. `market_evidence`나 `market_eval`은 읽거나 수정하지 않습니다. `domain_evidence`에는 평가가 실제로 인용한 기술 조사 근거만 원래 ID와 출처를 유지해 담습니다. 새로운 조사 결과를 만들어내지 않습니다.

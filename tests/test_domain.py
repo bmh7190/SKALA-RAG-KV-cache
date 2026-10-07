@@ -131,7 +131,7 @@ class DomainNodeTest(unittest.TestCase):
             }
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=complete_assessment(fake_invoke),
         ) as llm:
             update = evaluate(state)
@@ -204,7 +204,7 @@ class DomainNodeTest(unittest.TestCase):
             }
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=complete_assessment(fake_invoke),
         ) as llm:
             update = evaluate(state)
@@ -238,7 +238,7 @@ class DomainNodeTest(unittest.TestCase):
 
     def test_missing_research_result_is_noted_without_llm(self):
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=AssertionError("LLM called"),
         ):
             update = evaluate(new_state())
@@ -277,7 +277,7 @@ class DomainNodeTest(unittest.TestCase):
             }
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=complete_assessment(fake_invoke),
         ) as llm:
             update = evaluate(state)
@@ -331,7 +331,7 @@ class DomainNodeTest(unittest.TestCase):
             }
 
         with patch(
-            "kv_cache_eval.features.domain.node.invoke_structured",
+            "kv_cache_eval.features.domain.assessment.invoke_structured",
             side_effect=complete_assessment(fake_invoke),
         ):
             update = evaluate(state)
