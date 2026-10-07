@@ -301,7 +301,7 @@ def export_pdf(state):
         count = len(PdfReader(temporary).pages)
         if count > 10:
             raise ReportTooLong(
-                f"보고서가 {count}쪽입니다. 참고문헌 포함 10쪽 이하로 압축해야 합니다."
+                f"보고서가 {count}쪽입니다. 표지·참고문헌 포함 10쪽 이하로 압축해야 합니다."
             )
         if count < 1:
             raise ValueError("PDF 내용이 비어 있습니다")

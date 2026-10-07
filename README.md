@@ -209,6 +209,7 @@ LANGSMITH_TRACING=false
 ### 결과 확인
 
 - **PDF:** `output/pdf/kv_cache_evaluation_report.pdf` — 여러 결과를 보관하려면 `REPORT_PDF_PATH`로 경로 지정.
+- **표지:** PDF 저장 시 논문 형식의 표지를 자동으로 추가합니다. 작성자 이름은 `.env`의 `REPORT_AUTHORS`, 소속은 `REPORT_AFFILIATION`(기본 SKALA), 작성일은 `REPORT_DATE`(기본 PDF 생성일)로 설정합니다. 작성자가 비어 있으면 이름을 표시하지 않습니다. 표지·참고문헌을 포함해 최대 10쪽이며, 본문 페이지 번호는 SUMMARY에서 1로 시작합니다.
 - **체크포인트:** `data/cache/supervisor/checkpoints.sqlite`.
 - **실행 기록:** `data/cache/supervisor/<run-id>/`의 `state.json`, `decisions.jsonl`, `graph.mmd`.
 - **상세 준비 방법:** [기술 조사 안내](src/kv_cache_eval/features/technical_research/README.md). 원문·인덱스·캐시·PDF는 Git에 포함되지 않습니다.
