@@ -229,3 +229,11 @@ REPORT_PDF_PATH=output/pdf/kv_cache_evaluation_main_ver2.pdf \
 
 - 사용자 확인을 거친 238줄 README를 최종 반영했다. 품질 평가 기준·State 설명·실행 설정을 보완하고, Mermaid에서 조사·평가·보고서 영역과 공통 결과 복귀 경로를 구분했다. 별도 이미지 파일은 사용하지 않는다.
 - 사용자 요청으로 문서 브랜치의 기존 두 커밋과 검토 후 변경을 하나의 커밋으로 통합했다. 상대 링크·코드 블록·공백 검사 후 기존 PR #16에 반영한다.
+
+## 근거 판단 정책의 소유 위치 정리 — refactor
+
+- 원격 `main-ver2`의 `ac9ac1b`를 기준으로 작업했다. 기존 `refactor`의 커밋은 모두 main-ver2에 포함되어 있어 fast-forward로 기준을 맞췄다.
+- `graph/gates.py`의 `supported`, `assessment_gaps`, `research_gaps`, `check_evidence`를 `features/supervisor/evidence_policy.py`로 이동했다. 근거 충분성과 진행 허용 여부를 Supervisor 정책으로 모았다.
+- 그래프 진입 노드 `validate_input`은 `graph/validation.py`로 분리했다. 기존 gates 모듈을 제거하고 호출부·테스트 import·README 구조 설명을 수정했다. 작업 실행부의 근거 정책 import도 모듈 상단으로 정리했다.
+- 함수명·인자·본문은 AST 비교로 기존 5개 함수와 동일함을 확인했다. 판단 기준·반환값·State·그래프 노드 이름과 연결·재시도 상한은 유지했다.
+- 검증: 오프라인 테스트 119개 통과, 변경 Python 파일 Ruff I/F·포맷 및 Git 공백 검사 통과. 이번 변경 검증에서는 외부 API 호출과 PDF 재생성을 하지 않았다.

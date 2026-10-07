@@ -8,7 +8,7 @@ from kv_cache_eval.features.market.node import (
     build_market_node,
     validate_runtime_config,
 )
-from kv_cache_eval.graph.gates import check_evidence
+from kv_cache_eval.features.supervisor.evidence_policy import check_evidence
 
 
 class MarketNodeTest(unittest.TestCase):

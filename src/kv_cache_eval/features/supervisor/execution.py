@@ -16,6 +16,7 @@ from kv_cache_eval.common.tasks import (
 from kv_cache_eval.features.domain.results import DomainResponseError
 from kv_cache_eval.features.report.node import ReportTooLong, ReportValidationError
 from kv_cache_eval.features.supervisor.catalog import CRITERIA, OUTPUTS
+from kv_cache_eval.features.supervisor.evidence_policy import assessment_gaps
 
 TYPES = {
     **{
@@ -129,8 +130,6 @@ def _validate_update(state, agent, update, selected):
 
 def _find_evidence_gaps(state, agent, update):
     """갱신 결과에서 추가 근거가 필요한 항목을 찾는다."""
-    from kv_cache_eval.graph.gates import assessment_gaps
-
     merged = {**state, **update}
     gaps = (
         assessment_gaps(merged, agent, scoped=True) if agent in EVALUATION_KEYS else []

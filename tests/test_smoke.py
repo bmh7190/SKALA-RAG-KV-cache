@@ -3,7 +3,7 @@
 import unittest
 
 from kv_cache_eval.common.state import new_state
-from kv_cache_eval.graph.gates import check_evidence
+from kv_cache_eval.features.supervisor.evidence_policy import check_evidence
 
 
 class SmokeTest(unittest.TestCase):
