@@ -1,12 +1,150 @@
 """Render and atomically publish a quality-approved report."""
 
 import os
+from datetime import date
 from html import escape
 from pathlib import Path
 
 from kv_cache_eval.common.schemas import ReportDraft
+from kv_cache_eval.features.report.cover import report_cover
 
 DEFAULT_PDF_PATH = Path("output/pdf/kv_cache_evaluation_report.pdf")
+
+
+def _cover_metadata():
+    """Use explicit authors only; never infer team membership from repository history."""
+    values = {
+        "authors": os.getenv("REPORT_AUTHORS", "").strip(),
+        "affiliation": os.getenv("REPORT_AFFILIATION", "SKALA").strip(),
+        "date": os.getenv("REPORT_DATE", "").strip() or date.today().isoformat(),
+    }
+    for key, limit in (("authors", 500), ("affiliation", 150), ("date", 80)):
+        if len(values[key]) > limit:
+            raise ValueError(f"표지 {key}는 {limit}자 이하로 설정하세요.")
+    return values
+
+
+def _draw_cover(canvas, document, font_name, metadata, cover):
+    """A separate A4 title page; body headings and evidence stay unchanged."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph
+
+    width, height = document.pagesize
+    left = 25 * mm
+    available = width - 2 * left
+    ink = colors.HexColor("#172333")
+    muted = colors.HexColor("#5B6674")
+
+    def paragraph(
+        text,
+        top,
+        size,
+        leading,
+        color=ink,
+        max_height=40 * mm,
+        alignment=TA_CENTER,
+        block_width=None,
+        bottom=None,
+        min_size=None,
+    ):
+        block_width = block_width or available
+        style = ParagraphStyle(
+            "Cover",
+            fontName=font_name,
+            fontSize=size,
+            leading=leading,
+            textColor=color,
+            wordWrap="CJK",
+            alignment=alignment,
+        )
+        item = Paragraph(_paragraph_text(text), style)
+        _, item_height = item.wrap(block_width, max_height)
+        while (
+            item_height > max_height
+            and min_size is not None
+            and style.fontSize > min_size
+        ):
+            style.fontSize -= 1
+            style.leading = leading * style.fontSize / size
+            item = Paragraph(_paragraph_text(text), style)
+            _, item_height = item.wrap(block_width, max_height)
+        if item_height > max_height:
+            raise ValueError(
+                "표지 정보가 지정된 공간을 초과합니다. 작성자·소속을 줄이세요."
+            )
+        block_left = width - left - block_width if alignment == TA_RIGHT else left
+        item.drawOn(
+            canvas, block_left, bottom if bottom is not None else top - item_height
+        )
+        return item_height
+
+    canvas.saveState()
+    try:
+        title_height = paragraph(
+            cover.title, height - 85 * mm, 25, 38, max_height=34 * mm, min_size=16
+        )
+        cursor = height - 85 * mm - title_height - 10 * mm
+        if cover.subtitle:
+            subtitle_height = paragraph(
+                cover.subtitle,
+                cursor,
+                15,
+                23,
+                muted,
+                max_height=18 * mm,
+                min_size=10,
+            )
+            cursor -= subtitle_height + 8 * mm
+        if cover.scope:
+            paragraph(
+                cover.scope,
+                cursor,
+                10,
+                17,
+                muted,
+                max_height=22 * mm,
+                min_size=8,
+            )
+        details = []
+        if metadata["authors"]:
+            details.append("작성자  " + metadata["authors"])
+        if metadata["affiliation"]:
+            details.append(metadata["affiliation"])
+        details.append("작성일  " + metadata["date"])
+        paragraph(
+            "\n".join(details),
+            0,
+            10,
+            20,
+            muted,
+            max_height=45 * mm,
+            alignment=TA_RIGHT,
+            block_width=115 * mm,
+            bottom=29 * mm,
+        )
+        canvas.setStrokeColor(colors.HexColor("#D5DCE3"))
+        canvas.setLineWidth(0.5)
+        canvas.line(left, 22 * mm, width - left, 22 * mm)
+    finally:
+        canvas.restoreState()
+
+
+def _draw_body_footer(canvas, document, font_name):
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+
+    canvas.saveState()
+    try:
+        canvas.setFont(font_name, 8)
+        canvas.setFillColor(colors.HexColor("#5B6674"))
+        canvas.drawCentredString(
+            document.pagesize[0] / 2, 10 * mm, str(document.page - 1)
+        )
+    finally:
+        canvas.restoreState()
 
 
 def _paragraph_text(
@@ -63,7 +201,7 @@ def _write_pdf(
     """구조화된 보고서를 한글 PDF 파일로 저장한다."""
     try:
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.lib.enums import TA_LEFT
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import (
             ParagraphStyle,
@@ -73,6 +211,7 @@ def _write_pdf(
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (
+            PageBreak,
             Paragraph,
             SimpleDocTemplate,
             Spacer,
@@ -91,6 +230,8 @@ def _write_pdf(
 
     font_path = _resolve_font_path()
     font_name = "NanumGothic"
+    metadata = _cover_metadata()
+    cover = report_cover(report)
 
     if font_name not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(
@@ -107,33 +248,11 @@ def _write_pdf(
         leftMargin=20 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title="KIVI와 InfiniGen 다관점 평가 보고서",
-        author="SKALA-RAG-KV-cache",
+        title=cover.title,
+        author=metadata["authors"] or metadata["affiliation"],
     )
 
     styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        name="KoreanTitle",
-        parent=styles["Title"],
-        fontName=font_name,
-        fontSize=18,
-        leading=26,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#1F2937"),
-        spaceAfter=6,
-    )
-
-    subtitle_style = ParagraphStyle(
-        name="KoreanSubtitle",
-        parent=styles["BodyText"],
-        fontName=font_name,
-        fontSize=11,
-        leading=17,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#4B5563"),
-        spaceAfter=10,
-    )
 
     summary_title_style = ParagraphStyle(
         name="KoreanSummaryTitle",
@@ -181,20 +300,8 @@ def _write_pdf(
         textColor=colors.HexColor("#374151"),
     )
 
-    story = [
-        Paragraph(
-            "KV Cache 최적화 기술 다관점 평가 보고서",
-            title_style,
-        ),
-        Paragraph(
-            "KIVI와 InfiniGen 비교",
-            subtitle_style,
-        ),
-        Spacer(
-            1,
-            5 * mm,
-        ),
-    ]
+    # A non-empty first page triggers the cover callback; SUMMARY starts on page 2.
+    story = [Spacer(1, 1), PageBreak()]
 
     for section_title, section_content in report["sections"]:
         if section_title == "SUMMARY":
@@ -230,4 +337,10 @@ def _write_pdf(
                 )
             )
 
-    document.build(story)
+    document.build(
+        story,
+        onFirstPage=lambda canvas, doc: _draw_cover(
+            canvas, doc, font_name, metadata, cover
+        ),
+        onLaterPages=lambda canvas, doc: _draw_body_footer(canvas, doc, font_name),
+    )

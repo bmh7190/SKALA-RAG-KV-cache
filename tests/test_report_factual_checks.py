@@ -53,8 +53,11 @@ class MandatoryFactualChecksTests(unittest.TestCase):
                 return judge()
             return RunnableLambda(
                 lambda _: {
-                    name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
-                    for name in BODY_FIELDS
+                    "cover": {"title": "자동 제목", "subtitle": "", "scope": ""},
+                    **{
+                        name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
+                        for name in BODY_FIELDS
+                    },
                 }
             )
 

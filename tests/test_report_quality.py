@@ -135,8 +135,11 @@ class ReportQualityTests(unittest.TestCase):
             self.assertIn("CitedReport", schema.model_json_schema()["title"])
             return RunnableLambda(
                 lambda _: {
-                    name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
-                    for name in BODY_FIELDS
+                    "cover": {"title": "자동 생성 제목", "subtitle": "", "scope": ""},
+                    **{
+                        name: [{"text": "검증된 설명", "evidence_ids": ["kivi:a"]}]
+                        for name in BODY_FIELDS
+                    },
                 }
             )
 
@@ -149,6 +152,7 @@ class ReportQualityTests(unittest.TestCase):
         )
         self.assertEqual(report["cited_evidence_ids"], ["kivi:a"])
         self.assertEqual(report["sections"][0][1], "검증된 설명 [kivi:a]")
+        self.assertEqual(report["cover"]["title"], "자동 생성 제목")
 
     def test_runtime_schema_rejects_fabricated_ids_and_inline_gaps(self):
         from pydantic import ValidationError
@@ -161,6 +165,7 @@ class ReportQualityTests(unittest.TestCase):
                 name: [{"text": "설명", "evidence_ids": ["kivi:a"]}]
                 for name in BODY_FIELDS
             }
+            raw["cover"] = {"title": "자동 제목", "subtitle": "", "scope": ""}
             raw["summary"] = [{"text": text, "evidence_ids": ids}]
             with self.assertRaises(ValidationError):
                 schema.model_validate(raw)
@@ -172,6 +177,7 @@ class ReportQualityTests(unittest.TestCase):
 
         schema = cited_report_schema({"kivi:a": {}})
         raw = {name: [{"text": "설명", "evidence_ids": []}] for name in BODY_FIELDS}
+        raw["cover"] = {"title": "자동 제목", "subtitle": "", "scope": ""}
         raw["perspectives"] = []
         with self.assertRaises(ValidationError):
             schema.model_validate(raw)
